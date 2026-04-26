@@ -18,6 +18,7 @@ export default function VideoAnnotator() {
   const [teams, setTeams] = useState(['Team A', 'Team B']);
   const [folderFiles, setFolderFiles] = useState([]);
   const [currentFileIndex, setCurrentFileIndex] = useState(null);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const videoRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -491,6 +492,34 @@ export default function VideoAnnotator() {
     link.click();
   };
 
+  const runAiTracking = async () => {
+    if (!exportName) return alert("Please select a video first.");
+    
+    setIsProcessing(true);
+    try {
+      const response = await fetch('http://localhost:5001/run-inference', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // Note: You must ensure the video file exists in the directory the server expects
+        body: JSON.stringify({
+          videoPath: `./videos/${exportName}.mp4`, 
+          conf: 0.25
+        }),
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        alert("AI Tracking Complete! Check your 'runs' folder for the processed video.");
+      } else {
+        alert("Error: " + data.error);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 text-white p-4">
       <input
@@ -616,11 +645,22 @@ export default function VideoAnnotator() {
                     </div>
 
                     <button
-                      // onClick={runTracking}
-                      className="bg-gray-600 hover:bg-green-700 px-3 py-1 rounded-lg font-bold flex items-center gap-2"
+                      onClick={runAiTracking}
+                      disabled={isProcessing || !videoSrc}
+                      className={`px-3 py-1 rounded-lg font-bold flex items-center gap-2 ${
+                        isProcessing 
+                          ? 'bg-gray-700 cursor-wait' 
+                          : 'bg-gray-600 hover:bg-green-700 shadow-lg shadow-green-700/20'
+                      }`}
                     >
-                      <Play size={16} />
-                      Run Tracking Model
+                      {isProcessing ? (
+                        <span className="animate-pulse">Processing Video...</span>
+                      ) : (
+                        <>
+                          <Play size={16} fill="currentColor" />
+                          Run Tracking Model
+                        </>
+                      )}
                     </button>
 
                     <button

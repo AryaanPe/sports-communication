@@ -4,7 +4,11 @@ const path = require('path');
 const cors = require('cors');
 
 const app = express();
-app.use(cors());
+app.use(cors({
+    origin: 'http://localhost:3001',
+    methods: ['GET', 'POST'],
+    allowedHeaders: ['Content-Type']
+}));
 app.use(express.json());
 
 // Serve the 'runs' folder so React can play the output videos
@@ -18,14 +22,18 @@ app.post('/run-inference', (req, res) => {
     
     // Construct arguments for test.py
     const args = [
+        'run', 
+        '-n', 'sports-communication-annotator', 
+        'python',
         scriptPath, 
         videoPath, 
         '--weights', weights || 'best.pt', 
-        '--conf', conf?.toString() || '0.25'
+        '--conf', conf?.toString() || '0.25',
+        '--device', 'cpu'
     ];
 
     console.log(`Executing: python ${args.join(' ')}`);
-    const pythonProcess = spawn('python', args);
+    const pythonProcess = spawn('conda', args);
 
     pythonProcess.stdout.on('data', (data) => console.log(`Python: ${data}`));
     pythonProcess.stderr.on('data', (data) => console.error(`Error: ${data}`));
@@ -44,4 +52,4 @@ app.post('/run-inference', (req, res) => {
     });
 });
 
-app.listen(5000, () => console.log('Backend bridge running on http://localhost:5000'));
+app.listen(5001, () => console.log('Backend bridge running on http://localhost:5001'));
