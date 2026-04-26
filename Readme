@@ -1,0 +1,123 @@
+Sports Non-Verbal Communication Video Annotator  
+
+# A lightweight web app for tagging, analyzing, and exporting non-verbal communication events in sports footage.
+
+# Features/Controls:
+- Upload new video intially or to replace current video
+- play/pause button  
+- Click to play/pause on the video  
+- Progress bar  
+- Volume control (mute + slider)  
+- Playback speed controls (0.25× → 2×)  
+- Keyboard Shortcuts:
+  - Spacebar: Pause/Play
+  - Left/Right Arrow: Jump forward/backward 3 seconds
+
+
+
+# Annotation System
+- Predefined non-verbal communication action buttons  
+- Custom annotations (“Other”)  
+- Automatic timestamping (video time + optional game clock)  
+- Click an annotation to jump to that moment  
+- Delete any annotation  
+- Export all annotations as `annotations.json`  
+
+
+
+# Definitions:
+
+- Eye Contact  
+ - Intentional glance used to signal:
+  - Readiness for a pass  
+  - Acknowledgement of a defensive change  
+  - Confirmation of a play or cut  
+
+- Screen  
+ - Indicates a screen is coming. Includes:
+  - Moving toward a defender to set a pick  
+  - Using a stance or gesture to signal where the screen will be  
+
+- Directing (Gesturing / Pointing)  
+ - Hand motions or body cues used to direct teammates:
+  - Where to move  
+  - When to cut  
+  - Which play is being executed  
+
+- Call for Ball  
+  - Non-verbal gestures asking for a pass:
+  - Open hand raised  
+  - Hand extended toward passer  
+  - Flashing open into space  
+
+- Defensive Switch  
+ - Silent defensive coordination:
+  - Pointing at a new assignment  
+  - Gesturing to swap matchups  
+  - Eye contact + hand signal to change coverage  
+
+- Nod  
+ - A subtle confirmation cue:
+  - “Run it now”  
+  - “I’m ready”  
+  - “I see the same read as you”  
+
+- Other (Custom)  
+ - User-defined events not covered above.  
+  - Examples:
+   - “Hand wave”  
+   - “Tap on chest”  
+   - “Backdoor signal”  
+
+
+
+# Annotation Controls
+ - Action Buttons: Add an annotation with that label 
+  - Game Clock Input: Optional text like “10:45 Q2” 
+  - Custom Annotation (“Other”): Enter custom label + click “Add Other” 
+  - Annotation List: Shows events newest → oldest 
+  - Click Annotation: Jump to annotation time 
+  - Trash Icon: Delete annotation 
+  - Export: Download "annotations.json" or whatever the user names the file
+
+
+
+# Export Format
+- Exports an array of JSON objects like:
+
+ - json
+{
+  "id": 1732461123456,
+  "type": "Screen",
+  "label": "Screen",
+  "timestamp": 32.841,
+  "formattedTime": "0:32",
+  "gameClockTime": "9:12 Q1" (if applicable)
+}
+
+ - csv
+
+{ id,type,label,timestamp,formattedTime,gameClockTime }
+
+
+
+
+# How to Run
+
+To run the annotator locally: 
+
+ - 1. Install Dependencies
+  - Have **Node.js** installed (version 16+ recommended).  
+
+ - 2. Then, in the project folder, run:
+  npm install
+
+ - 3. Start the Development Server
+  Run: npm start
+
+- This will start the app at:
+  
+   http://localhost:3000
+
+
+
