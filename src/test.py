@@ -21,7 +21,7 @@ from pathlib import Path
 
 from ultralytics import YOLO
 
-VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}
+VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v", ".jpg", ".jpeg", ".png"}
 
 DEFAULT_WEIGHTS = "runs/train/aisports_yolov8x8/weights/best.pt"
 
@@ -209,6 +209,7 @@ def main() -> None:
         "device": args.device,
         "line_width": args.line_width,
         "vid_stride": args.vid_stride,
+        "exist_ok": True
     }
 
     if args.output:
@@ -240,7 +241,7 @@ def main() -> None:
             "Check Ultralytics version and video codec support."
         )
 
-    if args.output:
+    elif args.output:
         final = Path(args.output).expanduser()
         if not final.is_absolute():
             final = (script_dir / final).resolve()

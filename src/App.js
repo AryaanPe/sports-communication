@@ -19,6 +19,7 @@ export default function VideoAnnotator() {
   const [folderFiles, setFolderFiles] = useState([]);
   const [currentFileIndex, setCurrentFileIndex] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [processedOverlay, setProcessedOverlay] = useState(null);
 
   const videoRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -325,7 +326,10 @@ export default function VideoAnnotator() {
   const handlePlayPause = () => {
     if (!videoRef.current) return;
     if (isPlaying) videoRef.current.pause();
-    else videoRef.current.play();
+    else {
+      setProcessedOverlay(null); // clear the tracker view
+      videoRef.current.play();
+    }
     setIsPlaying(!isPlaying);
   };
 
@@ -350,6 +354,7 @@ export default function VideoAnnotator() {
     const newTime = pos * duration;
     videoRef.current.currentTime = newTime;
     setCurrentTime(newTime);
+    setProcessedOverlay(null);
   };
 
   const handleSpeedChange = (speed) => {
@@ -492,33 +497,68 @@ export default function VideoAnnotator() {
     link.click();
   };
 
-  const runAiTracking = async () => {
-    if (!exportName) return alert("Please select a video first.");
-    
-    setIsProcessing(true);
-    try {
-      const response = await fetch('http://localhost:5001/run-inference', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        // Note: You must ensure the video file exists in the directory the server expects
-        body: JSON.stringify({
-          videoPath: `./videos/${exportName}.mp4`, 
-          conf: 0.25
-        }),
-      });
+  const analyzeCurrentFrame = async () => {
+    if (!videoRef.current) return;
 
-      const data = await response.json();
-      if (response.ok) {
-        alert("AI Tracking Complete! Check your 'runs' folder for the processed video.");
-      } else {
-        alert("Error: " + data.error);
+    // 1. Capture the current frame to a canvas
+    const canvas = document.createElement('canvas');
+    canvas.width = videoRef.current.videoWidth;
+    canvas.height = videoRef.current.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+
+    // 2. Convert to a Blob (image file)
+    canvas.toBlob(async (blob) => {
+      const formData = new FormData();
+      formData.append('image', blob, 'frame.jpg');
+      formData.append('conf', '0.25');
+
+      setIsProcessing(true);
+      try {
+        const response = await fetch('http://localhost:5001/run-inference-frame', {
+          method: 'POST',
+          body: formData, // Send as multi-part form data
+        });
+
+        const data = await response.json();
+        if (data.processedImageUrl) {
+          setProcessedOverlay(`${data.processedImageUrl}?t=${Date.now()}`);
+        }
+      } catch (err) {
+        console.error("Frame analysis failed:", err);
+      } finally {
+        setIsProcessing(false);
       }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsProcessing(false);
-    }
+    }, 'image/jpeg');
   };
+
+  // const runAiTracking = async () => {
+  //   if (!exportName) return alert("Please select a video first.");
+    
+  //   setIsProcessing(true);
+  //   try {
+  //     const response = await fetch('http://localhost:5001/run-inference', {
+  //       method: 'POST',
+  //       headers: { 'Content-Type': 'application/json' },
+  //       // Note: You must ensure the video file exists in the directory the server expects
+  //       body: JSON.stringify({
+  //         videoPath: `./videos/${exportName}.mp4`, 
+  //         conf: 0.25
+  //       }),
+  //     });
+
+  //     const data = await response.json();
+  //     if (response.ok) {
+  //       alert("AI Tracking Complete! Check your 'runs' folder for the processed video.");
+  //     } else {
+  //       alert("Error: " + data.error);
+  //     }
+  //   } catch (err) {
+  //     console.error(err);
+  //   } finally {
+  //     setIsProcessing(false);
+  //   }
+  // };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 text-white p-4">
@@ -563,26 +603,36 @@ export default function VideoAnnotator() {
             {/* LEFT SIDE */}
             <div className="flex-[7] flex flex-col gap-3">
               <div className="bg-gray-800 rounded-lg p-3">
-                <video
-                  ref={videoRef}
-                  src={videoSrc}
-                  onTimeUpdate={handleTimeUpdate}
-                  onLoadedMetadata={handleLoadedMetadata}
-                  onClick={handleVideoClick}
-                  className="w-full rounded-lg cursor-pointer"
-                  style={{ maxHeight: '60vh' }}
-                  onEnded={() => setIsPlaying(false)}
-                />
+                <div className="relative w-full overflow-hidden rounded-lg bg-black group">
+                  <video
+                    ref={videoRef}
+                    src={videoSrc}
+                    onTimeUpdate={handleTimeUpdate}
+                    onLoadedMetadata={handleLoadedMetadata}
+                    onClick={handleVideoClick}
+                    className={`w-full rounded-lg cursor-pointer ${processedOverlay ? 'opacity-0' : 'opacity-100'}`}
+                    style={{ maxHeight: '60vh' }}
+                    onEnded={() => setIsPlaying(false)}
+                  />
 
-                {!videoSrc && (
-                  <div className="text-gray-400 text-lg text-center">
-                    No file selected.
-                    <br />
-                    <span className="text-lg text-gray-400">
-                      Please choose a file from the folder window or upload a file.
-                    </span>
-                  </div>
-                )}
+                  {processedOverlay && (
+                    <img 
+                      src={processedOverlay} 
+                      alt="AI Analysis"
+                      className="absolute top-0 left-0 w-full h-full object-contain z-10 pointer-events-none"
+                    />
+                  )}
+
+                  {!videoSrc && (
+                    <div className="text-gray-400 text-lg text-center">
+                      No file selected.
+                      <br />
+                      <span className="text-lg text-gray-400">
+                        Please choose a file from the folder window or upload a file.
+                      </span>
+                    </div>
+                  )}
+                </div>
 
                 {/* PLAYER CONTROLS */}
                 <div className="mt-2 space-y-2">
@@ -645,7 +695,7 @@ export default function VideoAnnotator() {
                     </div>
 
                     <button
-                      onClick={runAiTracking}
+                      onClick={analyzeCurrentFrame}
                       disabled={isProcessing || !videoSrc}
                       className={`px-3 py-1 rounded-lg font-bold flex items-center gap-2 ${
                         isProcessing 
