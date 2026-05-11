@@ -20,6 +20,7 @@ export default function VideoAnnotator() {
   const [currentFileIndex, setCurrentFileIndex] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processedOverlay, setProcessedOverlay] = useState(null);
+  const [currentBoxes, setCurrentBoxes] = useState([]);
 
   const videoRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -403,7 +404,12 @@ export default function VideoAnnotator() {
       gameClockTime: gameClockTime || 'N/A',
       team,
       // Store metadata for cleaner data analysis later
-      metadata: { location, result, shotType: activeShot.label } 
+      metadata: {
+        location, 
+        result, 
+        shotType: activeShot.label,
+        frameDetections: currentBoxes
+      } 
     };
     
     setAnnotations([newAnnotation, ...annotations]);
@@ -422,6 +428,9 @@ export default function VideoAnnotator() {
       formattedTime: formatTime(timestamp),
       gameClockTime: gameClockTime || 'N/A',
       team,
+      metadata: {
+        frameDetections: currentBoxes
+      }
     };
     setAnnotations([newAnnotation, ...annotations]);
   };
@@ -479,16 +488,44 @@ export default function VideoAnnotator() {
 
   const exportAnnotationsCSV = () => {
     const cleanAnnotations = getCleanAnnotations();
-    const headers = ['id', 'type', 'label', 'timestamp', 'formattedTime', 'gameClockTime', 'team'];
-
+    const headers = ['Timestamp', 'Game Clock', 'Team', 'Action', 'Label', 'Shot Result', 'Location', 'Player Tags'];
+    
     const escape = (value) => {
       if (value === null || value === undefined) return '""';
       const str = String(value).replace(/"/g, '""');
       return `"${str}"`;
     };
 
-    const rows = cleanAnnotations.map((ann) => headers.map((field) => escape(ann[field])).join(','));
-    const csvContent = [headers.join(','), ...rows].join('\n');
+    const csvRows = cleanAnnotations.map(ann => {
+      // Extract metadata safely
+      const meta = ann.metadata || {};
+      
+      // Convert the player tags array/boxes into a readable string for a single cell
+      const playerTagsString = meta.frameDetections 
+        ? meta.frameDetections
+            .filter(d => d.playerName)
+            .map(d => d.playerName)
+            .join('; ')
+        : '';
+      
+      const rawBoxData = meta.frameDetections 
+        ? `"${JSON.stringify(meta.frameDetections).replace(/"/g, '""')}"` 
+        : '[]';
+
+      return [
+        ann.formattedTime,
+        ann.gameClockTime || '',
+        ann.team || '',
+        ann.type,
+        `"${ann.label.replace(/"/g, '""')}"`, // Wrap in quotes to handle commas
+        meta.result || '',
+        meta.location || '',
+        `"${playerTagsString}"`,
+        `"${rawBoxData}`
+      ].join(',');
+    });
+
+    const csvContent = [headers.join(','), ...csvRows].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -524,6 +561,9 @@ export default function VideoAnnotator() {
         if (data.processedImageUrl) {
           setProcessedOverlay(`${data.processedImageUrl}?t=${Date.now()}`);
         }
+        if (data.boxes) {
+          setCurrentBoxes(data.boxes || [])
+        }
       } catch (err) {
         console.error("Frame analysis failed:", err);
       } finally {
@@ -532,33 +572,21 @@ export default function VideoAnnotator() {
     }, 'image/jpeg');
   };
 
-  // const runAiTracking = async () => {
-  //   if (!exportName) return alert("Please select a video first.");
-    
-  //   setIsProcessing(true);
-  //   try {
-  //     const response = await fetch('http://localhost:5001/run-inference', {
-  //       method: 'POST',
-  //       headers: { 'Content-Type': 'application/json' },
-  //       // Note: You must ensure the video file exists in the directory the server expects
-  //       body: JSON.stringify({
-  //         videoPath: `./videos/${exportName}.mp4`, 
-  //         conf: 0.25
-  //       }),
-  //     });
+  const savePlayerTag = (index, name) => {
+    setCurrentBoxes(prevBoxes => {
+      // Create a deep copy of the boxes array
+      const newBoxes = [...prevBoxes];
+      
+      // Update exactly the one at the index clicked
+      newBoxes[index] = { 
+        ...newBoxes[index], 
+        playerName: name 
+      };
+      
+      return newBoxes;
+      }); 
+  };
 
-  //     const data = await response.json();
-  //     if (response.ok) {
-  //       alert("AI Tracking Complete! Check your 'runs' folder for the processed video.");
-  //     } else {
-  //       alert("Error: " + data.error);
-  //     }
-  //   } catch (err) {
-  //     console.error(err);
-  //   } finally {
-  //     setIsProcessing(false);
-  //   }
-  // };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 text-white p-4">
@@ -616,11 +644,46 @@ export default function VideoAnnotator() {
                   />
 
                   {processedOverlay && (
-                    <img 
-                      src={processedOverlay} 
-                      alt="AI Analysis"
-                      className="absolute top-0 left-0 w-full h-full object-contain z-10 pointer-events-none"
-                    />
+                    <div className="absolute inset-0 z-10">
+                      <img 
+                        src={processedOverlay} 
+                        className="w-full h-full object-fill pointer-events-none"
+                      />
+                      
+                      {currentBoxes.map((box, index) => {
+                        const isTagged = !!box.playerName;
+                        
+                        return (
+                          <div
+                            key={index}
+                            // MOVE THE CLICK HANDLER HERE
+                            onClick={(e) => {
+                              e.stopPropagation(); // Prevents clicking "through" to the video
+                              const name = prompt(`Tag player for box #${index + 1}:`);
+                              if (name) {
+                                savePlayerTag(index, name);
+                              }
+                            }}
+                            className={`absolute border-2 transition-all duration-200 cursor-pointer ${
+                              isTagged ? 'border-green-500 bg-green-500/20' : 'border-transparent hover:border-yellow-400'
+                            }`}
+                            style={{
+                              left: `${(box.x1 / (videoRef.current?.videoWidth || 1)) * 100}%`,
+                              top: `${(box.y1 / (videoRef.current?.videoHeight || 1)) * 100}%`,
+                              width: `${((box.x2 - box.x1) / (videoRef.current?.videoWidth || 1)) * 100}%`,
+                              height: `${((box.y2 - box.y1) / (videoRef.current?.videoHeight || 1)) * 100}%`,
+                              zIndex: 20 // Ensure boxes are above the image
+                            }}
+                          >
+                            {isTagged && (
+                              <span className="absolute -top-6 left-0 bg-green-500 text-black text-[10px] font-bold px-1 rounded whitespace-nowrap">
+                                {box.playerName}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   )}
 
                   {!videoSrc && (

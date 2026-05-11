@@ -48,10 +48,17 @@ app.post('/run-inference-frame', upload.single('image'), (req, res) => {
         '--device', 'cpu'
     ];
 
+    let detectionResults = [];
     console.log(`Executing: python ${args.join(' ')}`);
     const pythonProcess = spawn('conda', args);
 
-    pythonProcess.stdout.on('data', (data) => console.log(`Python: ${data}`));
+    pythonProcess.stdout.on('data', (data) => {
+        const output = data.toString();
+        if (output.includes("DETECTION_DATA:")) {
+            const jsonStr = output.split("DETECTION_DATA:")[1];
+            detectionResults = JSON.parse(jsonStr);
+        }
+    });
     pythonProcess.stderr.on('data', (data) => console.error(`Error: ${data}`));
 
     pythonProcess.on('close', (code) => {
@@ -65,10 +72,11 @@ app.post('/run-inference-frame', upload.single('image'), (req, res) => {
             if (fs.existsSync(unwantedFolder)) {
                 fs.rmSync(unwantedFolder, { recursive: true, force: true });
             }
-            
+
             // For now, we return a success status
             res.status(200).json({
-                processedImageUrl: `http://localhost:5001/output/current_frame/frame.jpg`
+                processedImageUrl: `http://localhost:5001/output/current_frame/frame.jpg`,
+                boxes: detectionResults
             });
         } else {
             res.status(500).json({ error: "Inference failed" });

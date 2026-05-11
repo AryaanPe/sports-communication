@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import shutil
 from pathlib import Path
+import json
 
 from ultralytics import YOLO
 
@@ -224,7 +225,19 @@ def main() -> None:
         run_kw["name"] = args.name
 
     if args.no_track:
-        model.predict(**run_kw)
+        results = model.predict(**run_kw)
+        detections = []
+
+        for r in results:
+            for box in r.boxes.data.tolist():
+                detections.append({
+                    "x1": box[0], "y1": box[1],
+                    "x2": box[2], "y2": box[3],
+                    "conf": box[4],
+                    "class": int(box[5])
+                })
+        
+        print(f"DETECTION_DATA:{json.dumps(detections)}")
     else:
         model.track(
             **run_kw,
@@ -247,7 +260,7 @@ def main() -> None:
             final = (script_dir / final).resolve()
         if produced.resolve() != final.resolve():
             shutil.move(str(produced), str(final))
-            print(f"Saved: {final}")
+            # print(f"Saved: {final}")
         else:
             print(f"Saved: {produced}")
     else:
