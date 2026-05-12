@@ -21,18 +21,8 @@ export default function VideoAnnotator() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processedOverlay, setProcessedOverlay] = useState(null);
   const [currentBoxes, setCurrentBoxes] = useState([]);
-
-  const videoRef = useRef(null);
-  const fileInputRef = useRef(null);
-  const folderInputRef = useRef(null);
-
-  const shotLocations = [
-    'Paint', 'Restricted Area', 'Left Corner 3', 'Right Corner 3', 
-    'Left Wing 3', 'Right Wing 3', 'Above Break 3', 'Midrange Left', 'Midrange Right', 'Midrange Center'
-  ];
-
-  const actionTypes = [
-    {
+  const [newActionLabel, setNewActionLabel] = useState('');
+  const [actions, setActions] = useState([{
       id: 'Eye Contact',
       label: 'Eye Contact',
       color: 'bg-blue-500',
@@ -196,6 +186,15 @@ export default function VideoAnnotator() {
       color: 'bg-pink-700',
       definition: 'Foul by any player'
     }
+  ]);
+
+  const videoRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const folderInputRef = useRef(null);
+
+  const shotLocations = [
+    'Paint', 'Restricted Area', 'Left Corner 3', 'Right Corner 3', 
+    'Left Wing 3', 'Right Wing 3', 'Above Break 3', 'Midrange Left', 'Midrange Right', 'Midrange Center'
   ];
 
   const teamColors = {
@@ -393,6 +392,21 @@ export default function VideoAnnotator() {
     }
   };
 
+  const handleRightClick = (e, actionId) => {
+    e.preventDefault(); // Stop the default browser menu from appearing
+    
+    const currentAction = actions.find(a => a.id === actionId);
+    const newLabel = prompt(`Rename "${currentAction.label}" to:`, currentAction.label);
+    
+    if (newLabel && newLabel.trim() !== "") {
+      setActions(actions.map(action => 
+        action.id === actionId 
+          ? { ...action, label: newLabel.trim(), id: newLabel.trim() } 
+          : action
+      ));
+    }
+  };
+
   const finalizeShotAnnotation = (location, result) => {
     const newAnnotation = {
       id: Date.now(),
@@ -450,6 +464,20 @@ export default function VideoAnnotator() {
     };
     setAnnotations([newAnnotation, ...annotations]);
     setCustomAnnotation('');
+  };
+
+  const addNewActionButton = () => {
+    if (!newActionLabel.trim()) return;
+
+    const newBtn = {
+      id: `custom-${Date.now()}`,
+      label: newActionLabel.trim(),
+      color: 'bg-gray-600', // Default color for new buttons
+      definition: 'User created action'
+    };
+
+    setActions([...actions, newBtn]);
+    setNewActionLabel('');
   };
 
   const deleteAnnotation = (id) => {
@@ -925,7 +953,7 @@ export default function VideoAnnotator() {
                 </div>
               </div>
 
-              <div className="bg-gray-800 rounded-lg p-3 sticky top-0">
+              {/* <div className="bg-gray-800 rounded-lg p-3 sticky top-0">
                 <h2 className="text-lg font-bold mb-3">Non-Verbal Communication Actions</h2>
 
                 <div className="grid grid-cols-2 gap-2">
@@ -942,7 +970,48 @@ export default function VideoAnnotator() {
                       </span>
                     </button>
                   ))}
-                </div>
+                </div> */}
+
+                <div className="space-y-4">
+                  {/* NEW BUTTON CREATOR */}
+                  <div className="p-3 bg-gray-900 rounded-lg border border-gray-700">
+                    <h3 className="text-xs font-bold text-gray-400 uppercase mb-2">Create New Button</h3>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newActionLabel}
+                        onChange={(e) => setNewActionLabel(e.target.value)}
+                        placeholder="Button Name"
+                        className="flex-1 bg-gray-800 text-white text-sm px-2 py-1 rounded border border-gray-600"
+                      />
+                      <button
+                        onClick={addNewActionButton}
+                        className="bg-green-600 hover:bg-green-700 px-3 py-1 rounded text-sm font-bold"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* ACTION BUTTONS GRID */}
+                  <div className="grid grid-cols-2 gap-2">
+                    {actions.map((action) => (
+                      <button
+                        key={action.id}
+                        onClick={() => handleActionClick(action)}
+                        onContextMenu={(e) => handleRightClick(e, action.id)} // RIGHT CLICK TO RENAME
+                        className={`group relative p-3 rounded-lg text-white font-bold text-sm transition-all active:scale-95 ${action.color} hover:brightness-110 shadow-lg`}
+                      >
+                        {action.label}
+                        
+                        {/* Tooltip or indicator that it's renameable */}
+                        <span className="absolute top-0 right-1 text-[8px] opacity-0 group-hover:opacity-40">
+                          R-Click
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                {/* </div> */}
 
                 {/* CUSTOM ANNOTATION */}
                 <div className="mt-3 p-2 bg-gray-700 rounded">
