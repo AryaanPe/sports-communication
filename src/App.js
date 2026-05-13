@@ -15,7 +15,11 @@ export default function VideoAnnotator() {
   const [prevVolume, setPrevVolume] = useState(1);
   const [exportName, setExportName] = useState('annotations');
   const [team, setTeam] = useState();
-  const [teams, setTeams] = useState(['Team A', 'Team B']);
+  const [teams, setTeams] = useState(
+    { id: 'team-a', name: 'Team A', color: 'bg-blue-600' },
+    { id: 'team-b', name: 'Team B', color: 'bg-red-600' }
+  );
+  const [activeTeamId, setActiveTeamId] = useState('team1');
   const [folderFiles, setFolderFiles] = useState([]);
   const [currentFileIndex, setCurrentFileIndex] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -263,8 +267,36 @@ export default function VideoAnnotator() {
 
     const teamA = parts[0].replace(/[^a-zA-Z0-9 ]+/g, ' ').trim();
     const teamB = parts[1].replace(/[^a-zA-Z0-9 ]+/g, ' ').trim();
-    return [capitalizeWords(teamA), capitalizeWords(teamB)];
+    const teamACap = capitalizeWords(teamA)
+    const teamBCap = capitalizeWords(teamB)
+    return [
+      {
+        id: teamACap, 
+        name: teamACap, 
+        color: teamColors[teamACap]
+      }, 
+      {
+        id: teamBCap,
+        name: teamBCap,
+        color: teamColors[teamBCap]
+      }
+    ];
   }
+
+const handleTeamRightClick = (e, teamId) => {
+  e.preventDefault();
+  const currentTeam = teams.find(t => t.id === teamId);
+  
+  const newName = prompt("Enter new team name:", currentTeam.name);
+  if (!newName) return;
+
+  const newColor = prompt("Enter color name or hex code (e.g. #2563eb):", currentTeam.color);
+  if (!newColor) return;
+
+  setTeams(teams.map(t => 
+    t.id === teamId ? { ...t, name: newName, color: newColor } : t
+  ));
+};
 
   function capitalizeWords(str) {
     return str
@@ -408,6 +440,7 @@ export default function VideoAnnotator() {
   };
 
   const finalizeShotAnnotation = (location, result) => {
+    const activeTeamName = teams.find(t => t.id === activeTeamId).name;
     const newAnnotation = {
       id: Date.now(),
       type: activeShot.id,
@@ -416,7 +449,7 @@ export default function VideoAnnotator() {
       timestamp: activeShot.timestamp,
       formattedTime: formatTime(activeShot.timestamp),
       gameClockTime: gameClockTime || 'N/A',
-      team,
+      activeTeamName,
       // Store metadata for cleaner data analysis later
       metadata: {
         location, 
@@ -433,6 +466,7 @@ export default function VideoAnnotator() {
   const addAnnotation = (actionType) => {
     if (!videoRef.current) return;
     const timestamp = videoRef.current.currentTime;
+    const activeTeamName = teams.find(t => t.id === activeTeamId).name;
     const newAnnotation = {
       id: Date.now(),
       type: actionType.id,
@@ -441,7 +475,7 @@ export default function VideoAnnotator() {
       timestamp,
       formattedTime: formatTime(timestamp),
       gameClockTime: gameClockTime || 'N/A',
-      team,
+      activeTeamName,
       metadata: {
         frameDetections: currentBoxes
       }
@@ -516,13 +550,7 @@ export default function VideoAnnotator() {
 
   const exportAnnotationsCSV = () => {
     const cleanAnnotations = getCleanAnnotations();
-    const headers = ['Timestamp', 'Game Clock', 'Team', 'Action', 'Label', 'Shot Result', 'Location', 'Player Tags'];
-    
-    const escape = (value) => {
-      if (value === null || value === undefined) return '""';
-      const str = String(value).replace(/"/g, '""');
-      return `"${str}"`;
-    };
+    const headers = ['Timestamp', 'Game Clock', 'Team', 'Action', 'Label'];
 
     const csvRows = cleanAnnotations.map(ann => {
       // Extract metadata safely
@@ -538,18 +566,14 @@ export default function VideoAnnotator() {
       
       const rawBoxData = meta.frameDetections 
         ? `"${JSON.stringify(meta.frameDetections).replace(/"/g, '""')}"` 
-        : '[]';
+        : '';
 
       return [
         ann.formattedTime,
         ann.gameClockTime || '',
-        ann.team || '',
+        ann.activeTeamName || '',
         ann.type,
         `"${ann.label.replace(/"/g, '""')}"`, // Wrap in quotes to handle commas
-        meta.result || '',
-        meta.location || '',
-        `"${playerTagsString}"`,
-        `"${rawBoxData}`
       ].join(',');
     });
 
@@ -933,44 +957,29 @@ export default function VideoAnnotator() {
                 <h3 className="text-sm font-bold mb-2">Team</h3>
                 <div className="grid grid-cols-2 gap-2 mb-3">
                   {teams.map((t) => {
-                    const color = teamColors[t];
-                    const isActive = team === t;
+                    const isActive = activeTeamId === t.id;
 
                     return (
                       <button
                         key={t}
-                        onClick={() => setTeam(t)}
+                        onClick={() => setActiveTeamId(t.id)}
+                        onContextMenu={(e) => handleTeamRightClick(e, t.id)}
                         style={{
-                          backgroundColor: isActive ? color : '#444',
-                          border: `2px solid ${color}`,
+                          backgroundColor: isActive ? t.color : '#444',
+                          border: `2px solid ${t.color}`,
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          justifyContent: 'center'
                         }}
-                        className="px-3 py-2 rounded font-bold text-white hover:opacity-90"
+                        className="px-1 py-2 rounded font-bold text-white hover:opacity-90 transition-all"
                       >
-                        {t}
+                        {t.name}
                       </button>
                     );
                   })}
                 </div>
               </div>
-
-              {/* <div className="bg-gray-800 rounded-lg p-3 sticky top-0">
-                <h2 className="text-lg font-bold mb-3">Non-Verbal Communication Actions</h2>
-
-                <div className="grid grid-cols-2 gap-2">
-                  {actionTypes.map((action) => (
-                    <button
-                      key={action.id}
-                      onClick={() => handleActionClick(action)}
-                      title={action.definition}
-                      className={`${action.color} hover:opacity-80 px-3 py-3 text-base rounded font-bold relative group`}
-                    >
-                      {action.label}
-                      <span className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none w-48 text-center z-10 shadow-lg">
-                        {action.definition}
-                      </span>
-                    </button>
-                  ))}
-                </div> */}
 
                 <div className="space-y-4">
                   {/* NEW BUTTON CREATOR */}
