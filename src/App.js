@@ -15,10 +15,10 @@ export default function VideoAnnotator() {
   const [prevVolume, setPrevVolume] = useState(1);
   const [exportName, setExportName] = useState('annotations');
   const [team, setTeam] = useState();
-  const [teams, setTeams] = useState(
+  const [teams, setTeams] = useState([
     { id: 'team-a', name: 'Team A', color: 'bg-blue-600' },
     { id: 'team-b', name: 'Team B', color: 'bg-red-600' }
-  );
+  ]);
   const [activeTeamId, setActiveTeamId] = useState('team1');
   const [folderFiles, setFolderFiles] = useState([]);
   const [currentFileIndex, setCurrentFileIndex] = useState(null);
@@ -202,16 +202,30 @@ export default function VideoAnnotator() {
   ];
 
   const teamColors = {
-    Jazz: '#753bbd',
-    Hawks: '#e03a3e',
-    Magic: '#0077c0',
-    Rockets: '#ce1141',
-    Nuggets: '#0e2240',
-    Kings: '#5a2d81',
-    Spurs: '#c4ced4',
-    Warriors: '#1d428a',
-    Thunder: '#ef3b24',
-    Lakers: '#552583',
+    'Jazz': '#753bbd',
+    'Hawks': '#e03a3e',
+    'Magic': '#0077c0',
+    'Rockets': '#ce1141',
+    'Nuggets': '#0e2240',
+    'Kings': '#5a2d81',
+    'Spurs': '#c4ced4',
+    'Warriors': '#1d428a',
+    'Thunder': '#ef3b24',
+    'Lakers': '#552583',
+    'Northwestern': '#4E2A84',
+    'Illinois': '#13294b',
+    'Indiana': '#990000',
+    'Iowa': '#FFCD00',
+    'Maryland': '#E03a3e',
+    'Michigan': '#00274c',
+    'Michigan State': '#18453B',
+    'Minnesota': '#7A0019',
+    'Nebraska': '#e41c38',
+    'Ohio State': '#BB0000',
+    'Penn State': '#041E42',
+    'Purdue': '#ceb888',
+    'Rutgers': '#cc0033',
+    'Wisconsin': '#c5050c'
   };
 
   const seekBy = useCallback(
@@ -263,7 +277,12 @@ export default function VideoAnnotator() {
 
   function extractTeamsFromFolderName(folderName) {
     const parts = folderName.split('_');
-    if (parts.length < 2) return ['Team A', 'Team B'];
+    if (parts.length < 2) {
+      return [
+        { id: 'team-a', name: 'Team A', color: '#2563eb' },
+        { id: 'team-b', name: 'Team B', color: '#dc2626' }
+      ];
+    }
 
     const teamA = parts[0].replace(/[^a-zA-Z0-9 ]+/g, ' ').trim();
     const teamB = parts[1].replace(/[^a-zA-Z0-9 ]+/g, ' ').trim();
@@ -273,12 +292,12 @@ export default function VideoAnnotator() {
       {
         id: teamACap, 
         name: teamACap, 
-        color: teamColors[teamACap]
+        color: teamColors[teamACap] || '#2563eb' // Fallback to blue if not in teamColors
       }, 
       {
         id: teamBCap,
         name: teamBCap,
-        color: teamColors[teamBCap]
+        color: teamColors[teamBCap] || '#dc2626' // Fallback to red if not in teamColors
       }
     ];
   }
@@ -338,7 +357,7 @@ const handleTeamRightClick = (e, teamId) => {
       const folderName = files[0].webkitRelativePath.split('/')[0];
       const [team1, team2] = extractTeamsFromFolderName(folderName);
       setTeams([team1, team2]);
-      setTeam(team1);
+      setActiveTeamId(team1.id);
     }
   };
 
@@ -961,7 +980,7 @@ const handleTeamRightClick = (e, teamId) => {
 
                     return (
                       <button
-                        key={t}
+                        key={t.id}
                         onClick={() => setActiveTeamId(t.id)}
                         onContextMenu={(e) => handleTeamRightClick(e, t.id)}
                         style={{
