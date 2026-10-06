@@ -25,6 +25,26 @@ Sports Non-Verbal Communication Video Annotator
 
 
 
+# Tagging Panels and Buttons
+- Click the pencil on a button (or right-click it) to edit it: label, definition, color, group, hotkey, lead/lag, descriptors, and delete
+- Any button can be deleted. An Undo link shows up for a few seconds
+- "Create New Button" adds one button. "Bulk add" takes a list separated by commas, semicolons or new lines and skips names that already exist
+- Colors come from a palette or any hex value
+- Drag buttons to reorder them, or drop one on a group header to move it into that group. Click a group header to collapse it
+- Hotkeys: set a single key per button in the editor, then press it to tag. They are off while you type or while a dialog is open
+- Lead/lag: a button can save a range (tag time minus lead, plus lag) instead of a single time. Exports have Start and End columns
+- Descriptors: options that are asked after you tag, like "Teammate, Official"
+- Panels: keep several sets of buttons and switch between them with the dropdown. You can create, rename, duplicate, delete and reset them, and export or import them as JSON. Import adds new panels and never overwrites yours
+- Panels and the annotations of each video are saved in the browser (localStorage)
+
+# More Annotation Features
+- Edit an annotation with the pencil: label, time, game clock, descriptor and a note
+- Filter the list by action or team, and use "Play clips" to watch the filtered annotations one after another
+- A timeline under the player shows one row per action. Click a marker to jump to it
+- Summary shows counts per action per team and can be exported as CSV
+- A single video can be uploaded from the start screen without picking a folder
+- The game clock can be typed in the Game Clock box and is added to each new annotation
+
 # Definitions:
 
 - Eye Contact  
@@ -92,12 +112,19 @@ Sports Non-Verbal Communication Video Annotator
   "label": "Screen",
   "timestamp": 32.841,
   "formattedTime": "0:32",
-  "gameClockTime": "9:12 Q1" (if applicable)
+  "gameClockTime": "9:12 Q1" (if applicable),
+  "activeTeamName": "Team A",
+  "startTime": 32.841,   (timestamp minus the button's lead)
+  "endTime": 32.841,     (timestamp plus the button's lag)
+  "descriptor": "Teammate" (if used),
+  "players": ["#23"],
+  "note": ""
 }
 
  - csv
 
-{ id,type,label,timestamp,formattedTime,gameClockTime }
+Timestamp,Game Clock,Team,Action,Label,Start,End,Descriptor,Players,Note
+(the first five columns are unchanged)
 
 
 

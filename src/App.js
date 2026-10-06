@@ -1,5 +1,32 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Play, Pause, Upload, Download, Trash2, Volume2, VolumeX } from 'lucide-react';
+import { Play, Pause, Upload, Download, Trash2, Volume2, VolumeX, Pencil, BarChart3 } from 'lucide-react';
+import {
+  COLOR_PALETTE,
+  colorProps,
+  uid,
+  csvCell,
+  formatTime,
+  downloadFile,
+  normalizeAction,
+  actionType,
+  makePanel,
+  loadPanels,
+  savePanels,
+  defaultActionsCopy,
+  buildPanelExport,
+  parseImportedPanels,
+  loadAnnotations,
+  saveAnnotations,
+} from './panelUtils';
+import Timeline from './components/Timeline';
+import {
+  ActionEditModal,
+  BulkAddModal,
+  DescriptorModal,
+  AnnotationEditModal,
+  SummaryModal,
+  summaryToCSV,
+} from './components/Modals';
 
 export default function VideoAnnotator() {
   const [videoSrc, setVideoSrc] = useState(null);
@@ -14,187 +41,78 @@ export default function VideoAnnotator() {
   const [volume, setVolume] = useState(1);
   const [prevVolume, setPrevVolume] = useState(1);
   const [exportName, setExportName] = useState('annotations');
-  const [team, setTeam] = useState();
   const [teams, setTeams] = useState([
-    { id: 'team-a', name: 'Team A', color: 'bg-blue-600' },
-    { id: 'team-b', name: 'Team B', color: 'bg-red-600' }
+    { id: 'team-a', name: 'Team A', color: '#2563eb' },
+    { id: 'team-b', name: 'Team B', color: '#dc2626' }
   ]);
-  const [activeTeamId, setActiveTeamId] = useState('team1');
+  const [activeTeamId, setActiveTeamId] = useState('team-a');
   const [folderFiles, setFolderFiles] = useState([]);
   const [currentFileIndex, setCurrentFileIndex] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processedOverlay, setProcessedOverlay] = useState(null);
   const [currentBoxes, setCurrentBoxes] = useState([]);
   const [newActionLabel, setNewActionLabel] = useState('');
-  const [actions, setActions] = useState([{
-      id: 'Eye Contact',
-      label: 'Eye Contact',
-      color: 'bg-blue-500',
-      definition: 'Visual connection between players to communicate intent, awareness, or coordination',
-    },
-    {
-      id: 'Screen',
-      label: 'Screen',
-      color: 'bg-green-500',
-      definition: 'Non-verbal signal or positioning to set or call for a pick/screen',
-    },
-    {
-      id: 'Direct',
-      label: 'Directing',
-      color: 'bg-red-500',
-      definition: 'Using gestures or body language to guide teammates into position or action',
-    },
-    {
-      id: 'Call for Ball',
-      label: 'Call for Ball',
-      color: 'bg-purple-500',
-      definition: 'Non-verbal signal requesting a pass, such as raising hand or showing target',
-    },
-    {
-      id: 'Move/Cut for Ball',
-      label: 'Move/Cut for Ball',
-      color: 'bg-yellow-500',
-      definition: 'Physical movement or cut signaling readiness to receive the ball',
-    },
-    {
-      id: 'Nod',
-      label: 'Nod',
-      color: 'bg-indigo-500',
-      definition: 'Head gesture indicating acknowledgment, agreement, or confirmation',
-    },
 
-    // NEW ACTIONS
-    {
-      id: 'Asking for Help',
-      label: 'Asking for Help',
-      color: 'bg-teal-500',
-      definition: 'Open-hand gesture calling another player towards oneself for assistance',
-    },
-    {
-      id: 'Recognition',
-      label: 'Recognition',
-      color: 'bg-emerald-500',
-      definition: 'Acknowledging a teammate after a positive play (e.g., pointing, clap, quick gesture)',
-    },
-    {
-      id: 'Frustration',
-      label: 'Frustration',
-      color: 'bg-rose-500',
-      definition: 'Body language showing frustration (e.g., dropping arms, slumping shoulders)',
-    },
-    {
-      id: 'Ball Our Way',
-      label: 'Ball Our Way',
-      color: 'bg-cyan-500',
-      definition: 'Signaling who has possession after a turnover (e.g., pointing direction)',
-    },
-    {
-      id: 'Encouragement',
-      label: 'Encouragement',
-      color: 'bg-lime-500',
-      definition: 'Signaling support/approval for a good play (e.g., clapping, thumbs up)',
-    },
-    {
-      id: 'Question Call',
-      label: 'Question Call',
-      color: 'bg-amber-500',
-      definition: 'Questioning a call (e.g., palms up/raised hands gesture toward officials)',
-    },
-    {
-      id: 'Celebration',
-      label: 'Celebration',
-      color: 'bg-pink-500',
-      definition: 'Celebratory gesture after a play (e.g., fist shake, quick pump)',
-    },
-    {
-      id: 'Point to Referee',
-      label: 'Point to Referee',
-      color: 'bg-orange-500',
-      definition: 'Directing attention to an official or signaling for a stoppage/timeout',
-    },
-    {
-      id: 'Call Play',
-      label: 'Call Play',
-      color: 'bg-violet-500',
-      definition: 'Signaling a specific offensive play/set to teammates',
-    },
-    {
-      id: 'Review Play',
-      label: 'Review Play',
-      color: 'bg-sky-500',
-      definition: 'Hand gesture indicating review (e.g., hand up with finger circling)',
-    },
-    {
-      id: 'Sweeping',
-      label: 'Sweeping',
-      color: 'bg-stone-500',
-      definition: 'Sweeping arm gesture instructing teammates to push/flow up the court',
-    },
-    {
-      id: 'Fake Screen',
-      label: 'Fake Screen',
-      color: 'bg-fuchsia-500',
-      definition: 'Approaching to set a screen, but slipping/leaving before contact is made',
-    },
-    {
-      id: 'Layup',
-      label: 'Layup',
-      color: 'bg-zinc-500',
-      definition: 'Layup shot attempt'
-    },
-    {
-      id: 'Three Pointer',
-      label: 'Three Pointer',
-      color: 'bg-blue-900',
-      definition: 'Three point shot attempt'
-    },
-    {
-      id: 'Mid-range shot',
-      label: 'Mid-range shot',
-      color: 'bg-red-300',
-      definition: 'Mid-range shot attempt'
-    },
-    {
-      id: 'Turnover',
-      label: 'Turnover',
-      color: 'bg-green-700',
-      definition: 'Turnover committed by the offensive player'
-    },
-    {
-      id: 'Pass',
-      label: 'Pass',
-      color: 'bg-yellow-700',
-      definition: 'Pass by an offensive player with the ball'
-    },
-    {
-      id: 'Block',
-      label: 'Block',
-      color: 'bg-gray-700',
-      definition: 'Blocked shot by a defensive player'
-    },
-    {
-      id: 'Offensive Rebound',
-      label: 'Offensive Rebound',
-      color: 'bg-purple-300',
-      definition: 'Rebound by an offensive player'
-    },
-    {
-      id: 'Defensive Rebound',
-      label: 'Defensive Rebound',
-      color: 'bg-teal-700',
-      definition: 'Rebound by a defensive player'
-    },
-    {
-      id: 'Foul',
-      label: 'Foul',
-      color: 'bg-pink-700',
-      definition: 'Foul by any player'
-    }
-  ]);
+  // buttons of the current panel
+  const [initialPanelData] = useState(loadPanels);
+  const [panels, setPanels] = useState(initialPanelData.panels);
+  const [activePanelId, setActivePanelId] = useState(initialPanelData.activePanelId);
+  const activePanel = panels.find((p) => p.id === activePanelId) || panels[0];
+  const actions = activePanel.actions;
+
+  const updatePanelActions = (panelId, updater) =>
+    setPanels((prev) =>
+      prev.map((p) =>
+        p.id === panelId ? { ...p, actions: typeof updater === 'function' ? updater(p.actions) : updater } : p
+      )
+    );
+  const setActions = (updater) => updatePanelActions(activePanel.id, updater);
+
+  const [editingAction, setEditingAction] = useState(null);
+  const [showBulkAdd, setShowBulkAdd] = useState(false);
+  const [descriptorPrompt, setDescriptorPrompt] = useState(null);
+  const [editingAnnotation, setEditingAnnotation] = useState(null);
+  const [showSummary, setShowSummary] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [filterType, setFilterType] = useState('all');
+  const [filterTeam, setFilterTeam] = useState('all');
+  const [clipMode, setClipMode] = useState(false);
+  const [collapsedGroups, setCollapsedGroups] = useState({});
+  const [dragActionId, setDragActionId] = useState(null);
+  const [videoKey, setVideoKey] = useState(null);
 
   const videoRef = useRef(null);
   const fileInputRef = useRef(null);
   const folderInputRef = useRef(null);
+  const panelImportRef = useRef(null);
+  const clipRef = useRef(null);
+  const hotkeyRef = useRef(null);
+  const modalOpenRef = useRef(false);
+  const lastIdRef = useRef(0);
+
+  const nextId = () => {
+    const id = Math.max(Date.now(), lastIdRef.current + 1);
+    lastIdRef.current = id;
+    return id;
+  };
+
+  modalOpenRef.current = !!(
+    activeShot || editingAction || showBulkAdd || descriptorPrompt || editingAnnotation || showSummary
+  );
+
+  useEffect(() => {
+    savePanels(panels, activePanelId);
+  }, [panels, activePanelId]);
+
+  useEffect(() => {
+    if (videoKey) saveAnnotations(videoKey, annotations);
+  }, [videoKey, annotations]);
+
+  useEffect(() => {
+    if (!toast) return undefined;
+    const t = setTimeout(() => setToast(null), 8000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const shotLocations = [
     'Paint', 'Restricted Area', 'Left Corner 3', 'Right Corner 3', 
@@ -240,7 +158,7 @@ export default function VideoAnnotator() {
 
   useEffect(() => {
     const handleKeyPress = (e) => {
-      if (!videoRef.current || e.target.matches('input, textarea')) return;
+      if (!videoRef.current || e.target.matches('input, textarea, select') || modalOpenRef.current) return;
 
       if (e.code === 'Space') {
         e.preventDefault();
@@ -252,6 +170,8 @@ export default function VideoAnnotator() {
       } else if (e.code === 'ArrowLeft') {
         e.preventDefault();
         seekBy(-3);
+      } else if (!e.ctrlKey && !e.metaKey && !e.altKey && hotkeyRef.current) {
+        hotkeyRef.current(e);
       }
     };
 
@@ -263,8 +183,12 @@ export default function VideoAnnotator() {
     const file = e.target.files[0];
     if (file) {
       const url = URL.createObjectURL(file);
+      stopClips(false);
       setVideoSrc(url);
-      setAnnotations([]);
+      setVideoKey(file.name);
+      setAnnotations(loadAnnotations(file.name));
+      setCurrentBoxes([]);
+      setProcessedOverlay(null);
       setCurrentTime(0);
       setPlaybackSpeed(0.5);
       setVolume(1);
@@ -363,8 +287,13 @@ const handleTeamRightClick = (e, teamId) => {
 
   const loadVideoFromFile = (file, index) => {
     const url = URL.createObjectURL(file);
+    const key = file.webkitRelativePath || file.name;
+    stopClips(false);
     setVideoSrc(url);
-    setAnnotations([]);
+    setVideoKey(key);
+    setAnnotations(loadAnnotations(key));
+    setCurrentBoxes([]);
+    setProcessedOverlay(null);
     setCurrentTime(0);
     setPlaybackSpeed(0.5);
     setVolume(1);
@@ -379,15 +308,73 @@ const handleTeamRightClick = (e, teamId) => {
     if (isPlaying) videoRef.current.pause();
     else {
       setProcessedOverlay(null); // clear the tracker view
+      setCurrentBoxes([]); // old boxes don't match the new frame
       videoRef.current.play();
     }
     setIsPlaying(!isPlaying);
   };
 
+  const clipRange = (a) => {
+    const start = a.startTime !== undefined ? a.startTime : a.timestamp;
+    const end = a.endTime !== undefined ? a.endTime : a.timestamp;
+    return end > start ? { start, end } : { start: Math.max(0, a.timestamp - 1), end: a.timestamp + 3 };
+  };
+
+  const playClip = (index) => {
+    const clip = clipRef.current;
+    if (!clip || !videoRef.current) return;
+    const { start } = clip.list[index];
+    videoRef.current.currentTime = start;
+    setCurrentTime(start);
+    setProcessedOverlay(null);
+    const p = videoRef.current.play();
+    if (p && p.catch) p.catch(() => {});
+    setIsPlaying(true);
+  };
+
+  const stopClips = (pause = true) => {
+    clipRef.current = null;
+    setClipMode(false);
+    if (pause && videoRef.current) {
+      videoRef.current.pause();
+      setIsPlaying(false);
+    }
+  };
+
+  const advanceClip = () => {
+    const clip = clipRef.current;
+    if (!clip) return false;
+    if (clip.idx + 1 < clip.list.length) {
+      clip.idx += 1;
+      playClip(clip.idx);
+    } else {
+      stopClips();
+    }
+    return true;
+  };
+
+  const startClips = () => {
+    if (!videoRef.current) return;
+    const list = [...visibleAnnotations].sort((a, b) => a.timestamp - b.timestamp).map(clipRange);
+    if (list.length === 0) return;
+    clipRef.current = { list, idx: 0 };
+    setClipMode(true);
+    playClip(0);
+  };
+
+  const handleVideoEnded = () => {
+    if (advanceClip()) return;
+    setIsPlaying(false);
+  };
+
   const handleVideoClick = () => handlePlayPause();
 
   const handleTimeUpdate = () => {
-    if (videoRef.current) setCurrentTime(videoRef.current.currentTime);
+    if (!videoRef.current) return;
+    const t = videoRef.current.currentTime;
+    setCurrentTime(t);
+    const clip = clipRef.current;
+    if (clip && t >= clip.list[clip.idx].end) advanceClip();
   };
 
   const handleLoadedMetadata = () => {
@@ -403,9 +390,11 @@ const handleTeamRightClick = (e, teamId) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const pos = (e.clientX - rect.left) / rect.width;
     const newTime = pos * duration;
+    stopClips(false);
     videoRef.current.currentTime = newTime;
     setCurrentTime(newTime);
     setProcessedOverlay(null);
+    setCurrentBoxes([]);
   };
 
   const handleSpeedChange = (speed) => {
@@ -431,110 +420,267 @@ const handleTeamRightClick = (e, teamId) => {
   };
 
   const handleActionClick = (action) => {
-    // Check if this is a shot-type action
-    const shotTypes = ['Layup', 'Mid-range shot', 'Three Pointer'];
-    
-    if (shotTypes.includes(action.label)) {
+    if (!videoRef.current) return;
+    const timestamp = videoRef.current.currentTime;
+
+    if (action.kind === 'shot') {
       // Pause video while they fill out the form
-      if (isPlaying) handlePlayPause(); 
-      setActiveShot({ ...action, timestamp: videoRef.current.currentTime });
+      if (isPlaying) handlePlayPause();
+      setActiveShot({ ...action, timestamp });
+    } else if (action.descriptors && action.descriptors.length > 0) {
+      setDescriptorPrompt({ action, timestamp });
     } else {
-      addAnnotation(action);
+      addAnnotation(action, { timestamp });
     }
+  };
+
+  // hotkeys
+  hotkeyRef.current = (e) => {
+    if (e.key.length !== 1) return;
+    const key = e.key.toLowerCase();
+    const action = actions.find((a) => a.hotkey === key);
+    if (!action) return;
+    e.preventDefault();
+    if (!e.repeat) handleActionClick(action);
   };
 
   const handleRightClick = (e, actionId) => {
     e.preventDefault(); // Stop the default browser menu from appearing
-    
-    const currentAction = actions.find(a => a.id === actionId);
-    const newLabel = prompt(`Rename "${currentAction.label}" to:`, currentAction.label);
-    
-    if (newLabel && newLabel.trim() !== "") {
-      setActions(actions.map(action => 
-        action.id === actionId 
-          ? { ...action, label: newLabel.trim(), id: newLabel.trim() } 
-          : action
-      ));
-    }
+    const action = actions.find((a) => a.id === actionId);
+    if (action) setEditingAction(action);
+  };
+
+  const buildAnnotation = (action, { timestamp, label, descriptor, metadata } = {}) => {
+    const ts = timestamp !== undefined ? timestamp : videoRef.current ? videoRef.current.currentTime : 0;
+    const lead = Number(action.lead) || 0;
+    const lag = Number(action.lag) || 0;
+    const team = teams.find((t) => t.id === activeTeamId);
+    const players = currentBoxes.filter((b) => b.playerName).map((b) => b.playerName);
+    return {
+      id: nextId(),
+      type: actionType(action),
+      label: label !== undefined ? label : action.label,
+      color: action.color,
+      timestamp: ts,
+      formattedTime: formatTime(ts),
+      startTime: Math.max(0, ts - lead),
+      endTime: duration ? Math.min(duration, ts + lag) : ts + lag,
+      gameClockTime: gameClockTime || 'N/A',
+      activeTeamName: team ? team.name : '',
+      ...(descriptor ? { descriptor } : {}),
+      players,
+      note: '',
+      metadata: { ...(metadata || {}), frameDetections: currentBoxes },
+    };
   };
 
   const finalizeShotAnnotation = (location, result) => {
-    const activeTeamName = teams.find(t => t.id === activeTeamId).name;
-    const newAnnotation = {
-      id: Date.now(),
-      type: activeShot.id,
-      label: `${activeShot.label} (${result}) - ${location}`,
-      color: activeShot.color,
+    const newAnnotation = buildAnnotation(activeShot, {
       timestamp: activeShot.timestamp,
-      formattedTime: formatTime(activeShot.timestamp),
-      gameClockTime: gameClockTime || 'N/A',
-      activeTeamName,
+      label: `${activeShot.label} (${result}) - ${location}`,
       // Store metadata for cleaner data analysis later
-      metadata: {
-        location, 
-        result, 
-        shotType: activeShot.label,
-        frameDetections: currentBoxes
-      } 
-    };
-    
+      metadata: { location, result, shotType: activeShot.label },
+    });
+
     setAnnotations([newAnnotation, ...annotations]);
     setActiveShot(null);
   };
 
-  const addAnnotation = (actionType) => {
+  const addAnnotation = (action, options) => {
     if (!videoRef.current) return;
-    const timestamp = videoRef.current.currentTime;
-    const activeTeamName = teams.find(t => t.id === activeTeamId).name;
-    const newAnnotation = {
-      id: Date.now(),
-      type: actionType.id,
-      label: actionType.label,
-      color: actionType.color,
-      timestamp,
-      formattedTime: formatTime(timestamp),
-      gameClockTime: gameClockTime || 'N/A',
-      activeTeamName,
-      metadata: {
-        frameDetections: currentBoxes
-      }
-    };
-    setAnnotations([newAnnotation, ...annotations]);
+    const newAnnotation = buildAnnotation(action, options);
+    setAnnotations((prev) => [newAnnotation, ...prev]);
   };
 
   const addCustomAnnotation = () => {
     if (!videoRef.current || !customAnnotation.trim()) return;
-    const timestamp = videoRef.current.currentTime;
-    const newAnnotation = {
-      id: Date.now(),
-      type: 'Other',
-      label: customAnnotation.trim(),
-      color: 'bg-gray-500',
-      timestamp,
-      formattedTime: formatTime(timestamp),
-      gameClockTime: gameClockTime || 'N/A',
-      team,
-    };
+    const newAnnotation = buildAnnotation(
+      { id: 'Other', label: customAnnotation.trim(), color: 'bg-gray-500' },
+      { timestamp: videoRef.current.currentTime }
+    );
     setAnnotations([newAnnotation, ...annotations]);
     setCustomAnnotation('');
   };
 
   const addNewActionButton = () => {
-    if (!newActionLabel.trim()) return;
+    const label = newActionLabel.trim();
+    if (!label) return;
+    if (actions.some((a) => a.label.toLowerCase() === label.toLowerCase())) {
+      setToast({ message: `A button named "${label}" already exists` });
+      return;
+    }
 
-    const newBtn = {
-      id: `custom-${Date.now()}`,
-      label: newActionLabel.trim(),
-      color: 'bg-gray-600', // Default color for new buttons
-      definition: 'User created action'
-    };
+    const newBtn = normalizeAction({
+      id: uid('btn'),
+      label,
+      color: COLOR_PALETTE[actions.length % COLOR_PALETTE.length],
+      definition: 'User created action',
+    });
 
     setActions([...actions, newBtn]);
     setNewActionLabel('');
   };
 
+  const addBulkActions = (labels, group) => {
+    const newBtns = labels.map((label, i) =>
+      normalizeAction({
+        id: uid('btn'),
+        label,
+        group,
+        color: COLOR_PALETTE[(actions.length + i) % COLOR_PALETTE.length],
+        definition: 'User created action',
+      })
+    );
+    setActions((prev) => [...prev, ...newBtns]);
+    setShowBulkAdd(false);
+    setToast({ message: `Added ${newBtns.length} button${newBtns.length === 1 ? '' : 's'}` });
+  };
+
+  const saveActionEdit = (updated) => {
+    const clean = normalizeAction(updated);
+    setActions((prev) => {
+      // built in buttons use the label as id, keep that unless it clashes
+      const canRename =
+        !String(updated.id).startsWith('btn-') &&
+        clean.label !== updated.id &&
+        !prev.some((a) => a.id === clean.label);
+      const finalAction = canRename ? { ...clean, id: clean.label } : clean;
+      return prev.map((a) => (a.id === updated.id ? finalAction : a));
+    });
+    setEditingAction(null);
+  };
+
+  const deleteAction = (id) => {
+    const index = actions.findIndex((a) => a.id === id);
+    if (index < 0) return;
+    const removed = actions[index];
+    const panelId = activePanel.id;
+    updatePanelActions(panelId, (prev) => prev.filter((a) => a.id !== id));
+    setEditingAction(null);
+    setToast({
+      message: `Deleted button "${removed.label}"`,
+      undo: () =>
+        updatePanelActions(panelId, (prev) => {
+          const copy = [...prev];
+          copy.splice(Math.min(index, copy.length), 0, removed);
+          return copy;
+        }),
+    });
+  };
+
+  const moveAction = (dragId, targetId, groupOverride) => {
+    if (!dragId || dragId === targetId) return;
+    setActions((prev) => {
+      const from = prev.findIndex((a) => a.id === dragId);
+      if (from < 0) return prev;
+      const copy = [...prev];
+      const [item] = copy.splice(from, 1);
+      const target = copy.find((a) => a.id === targetId);
+      const moved = { ...item, group: groupOverride !== undefined ? groupOverride : target ? target.group : item.group };
+      if (target) copy.splice(copy.indexOf(target), 0, moved);
+      else copy.push(moved);
+      return copy;
+    });
+  };
+
+  const newPanel = () => {
+    const name = prompt('Name for the new panel:');
+    if (!name || !name.trim()) return;
+    const panel = makePanel(name.trim(), []);
+    setPanels((prev) => [...prev, panel]);
+    setActivePanelId(panel.id);
+  };
+
+  const renamePanel = () => {
+    const name = prompt('Rename panel to:', activePanel.name);
+    if (!name || !name.trim()) return;
+    setPanels((prev) => prev.map((p) => (p.id === activePanel.id ? { ...p, name: name.trim() } : p)));
+  };
+
+  const duplicatePanel = () => {
+    const copy = makePanel(`${activePanel.name} copy`, activePanel.actions);
+    setPanels((prev) => [...prev, copy]);
+    setActivePanelId(copy.id);
+  };
+
+  const deletePanel = () => {
+    if (panels.length <= 1) {
+      setToast({ message: 'You need at least one panel' });
+      return;
+    }
+    if (!window.confirm(`Delete panel "${activePanel.name}" and its ${actions.length} buttons?`)) return;
+    const remaining = panels.filter((p) => p.id !== activePanel.id);
+    setPanels(remaining);
+    setActivePanelId(remaining[0].id);
+  };
+
+  const resetPanel = () => {
+    if (!window.confirm(`Replace all buttons in "${activePanel.name}" with the built-in defaults?`)) return;
+    setActions(defaultActionsCopy());
+  };
+
+  const exportPanels = (all) => {
+    const list = all ? panels : [activePanel];
+    const name = all ? 'tagging-panels' : activePanel.name.replace(/[^a-z0-9-_]+/gi, '_') || 'tagging-panel';
+    downloadFile(`${name}.json`, JSON.stringify(buildPanelExport(list), null, 2), 'application/json');
+  };
+
+  const importPanels = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const imported = parseImportedPanels(String(reader.result));
+        const names = new Set(panels.map((p) => p.name));
+        const renamed = imported.map((p) => {
+          let name = p.name;
+          if (names.has(name)) name = `${name} (imported)`;
+          names.add(name);
+          return { ...p, name };
+        });
+        setPanels((prev) => [...prev, ...renamed]);
+        setActivePanelId(renamed[0].id);
+        setToast({ message: `Imported ${renamed.length} panel${renamed.length === 1 ? '' : 's'}` });
+      } catch (err) {
+        setToast({ message: `Import failed: ${err.message}` });
+      }
+    };
+    reader.readAsText(file);
+  };
+
   const deleteAnnotation = (id) => {
+    const index = annotations.findIndex((a) => a.id === id);
+    if (index < 0) return;
+    const removed = annotations[index];
     setAnnotations(annotations.filter((a) => a.id !== id));
+    setToast({
+      message: 'Annotation deleted',
+      undo: () =>
+        setAnnotations((prev) => {
+          const copy = [...prev];
+          copy.splice(Math.min(index, copy.length), 0, removed);
+          return copy;
+        }),
+    });
+  };
+
+  const saveAnnotationEdit = (id, changes) => {
+    setAnnotations((prev) =>
+      prev.map((a) => {
+        if (a.id !== id) return a;
+        const delta = changes.timestamp - a.timestamp;
+        return {
+          ...a,
+          ...changes,
+          formattedTime: formatTime(changes.timestamp),
+          startTime: Math.max(0, (a.startTime !== undefined ? a.startTime : a.timestamp) + delta),
+          endTime: (a.endTime !== undefined ? a.endTime : a.timestamp) + delta,
+        };
+      })
+    );
+    setEditingAnnotation(null);
   };
 
   const seekToAnnotation = (timestamp) => {
@@ -543,11 +689,6 @@ const handleTeamRightClick = (e, teamId) => {
     setCurrentTime(timestamp);
   };
 
-  const formatTime = (seconds) => {
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  };
 
   const getSafeExportName = (ext) => {
     const base = exportName.trim() !== '' ? exportName.trim() : 'annotations';
@@ -569,23 +710,14 @@ const handleTeamRightClick = (e, teamId) => {
 
   const exportAnnotationsCSV = () => {
     const cleanAnnotations = getCleanAnnotations();
-    const headers = ['Timestamp', 'Game Clock', 'Team', 'Action', 'Label'];
+    // new columns go at the end
+    const headers = ['Timestamp', 'Game Clock', 'Team', 'Action', 'Label', 'Start', 'End', 'Descriptor', 'Players', 'Note'];
 
-    const csvRows = cleanAnnotations.map(ann => {
-      // Extract metadata safely
+    const csvRows = cleanAnnotations.map((ann) => {
       const meta = ann.metadata || {};
-      
-      // Convert the player tags array/boxes into a readable string for a single cell
-      const playerTagsString = meta.frameDetections 
-        ? meta.frameDetections
-            .filter(d => d.playerName)
-            .map(d => d.playerName)
-            .join('; ')
-        : '';
-      
-      const rawBoxData = meta.frameDetections 
-        ? `"${JSON.stringify(meta.frameDetections).replace(/"/g, '""')}"` 
-        : '';
+      const players = ann.players && ann.players.length
+        ? ann.players
+        : (meta.frameDetections || []).filter((d) => d.playerName).map((d) => d.playerName);
 
       return [
         ann.formattedTime,
@@ -593,17 +725,26 @@ const handleTeamRightClick = (e, teamId) => {
         ann.activeTeamName || '',
         ann.type,
         `"${ann.label.replace(/"/g, '""')}"`, // Wrap in quotes to handle commas
+        ann.startTime !== undefined ? ann.startTime.toFixed(2) : '',
+        ann.endTime !== undefined ? ann.endTime.toFixed(2) : '',
+        csvCell(ann.descriptor || ''),
+        csvCell(players.join('; ')),
+        csvCell(ann.note || ''),
       ].join(',');
     });
 
-    const csvContent = [headers.join(','), ...csvRows].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = getSafeExportName('csv');
-    link.click();
+    downloadFile(getSafeExportName('csv'), [headers.join(','), ...csvRows].join('\n'), 'text/csv;charset=utf-8;');
   };
+
+  const exportSummaryCSV = (summary) => {
+    downloadFile(getSafeExportName('summary.csv'), summaryToCSV(summary), 'text/csv;charset=utf-8;');
+  };
+
+  const visibleAnnotations = annotations.filter(
+    (a) => (filterType === 'all' || a.type === filterType) && (filterTeam === 'all' || a.activeTeamName === filterTeam)
+  );
+  const annotationTypes = [...new Set(annotations.map((a) => a.type))];
+  const annotationTeams = [...new Set(annotations.map((a) => a.activeTeamName).filter(Boolean))];
 
   const analyzeCurrentFrame = async () => {
     if (!videoRef.current) return;
@@ -679,12 +820,20 @@ const handleTeamRightClick = (e, teamId) => {
         style={{ display: 'none' }}
       />
 
+      <input
+        type="file"
+        ref={panelImportRef}
+        onChange={importPanels}
+        accept=".json,application/json"
+        style={{ display: 'none' }}
+      />
+
       <div className="max-w-full mx-auto">
         <h1 className="text-3xl font-bold mb-4 text-center bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
           Sports Non Verbal Communication
         </h1>
 
-        {folderFiles.length === 0 && (
+        {folderFiles.length === 0 && !videoSrc && (
           <div className="bg-gray-800 rounded-lg p-12 mb-8 border-2 border-dashed border-gray-600 hover:border-blue-500 transition">
             <button
               onClick={() => folderInputRef.current && folderInputRef.current.click()}
@@ -694,10 +843,19 @@ const handleTeamRightClick = (e, teamId) => {
               <span className="text-xl">Click to select folder</span>
               <span className="text-sm">All files inside the folder will be displayed</span>
             </button>
+            <div className="mt-6 text-center text-gray-400 text-sm">
+              or{' '}
+              <button
+                onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                className="text-blue-400 hover:text-blue-300 underline"
+              >
+                upload a single video
+              </button>
+            </div>
           </div>
         )}
 
-        {folderFiles.length > 0 && (
+        {(folderFiles.length > 0 || videoSrc) && (
           <div className="flex gap-4">
             {/* LEFT SIDE */}
             <div className="flex-[7] flex flex-col gap-3">
@@ -711,16 +869,17 @@ const handleTeamRightClick = (e, teamId) => {
                     onClick={handleVideoClick}
                     className={`w-full rounded-lg cursor-pointer ${processedOverlay ? 'opacity-0' : 'opacity-100'}`}
                     style={{ maxHeight: '60vh' }}
-                    onEnded={() => setIsPlaying(false)}
+                    onEnded={handleVideoEnded}
                   />
 
                   {processedOverlay && (
                     <div className="absolute inset-0 z-10">
-                      <img 
-                        src={processedOverlay} 
+                      <img
+                        alt=""
+                        src={processedOverlay}
                         className="w-full h-full object-fill pointer-events-none"
                       />
-                      
+
                       {currentBoxes.map((box, index) => {
                         const isTagged = !!box.playerName;
                         
@@ -855,6 +1014,13 @@ const handleTeamRightClick = (e, teamId) => {
                       Upload
                     </button>
                   </div>
+
+                  <Timeline
+                    annotations={visibleAnnotations}
+                    duration={duration}
+                    currentTime={currentTime}
+                    onSeek={seekToAnnotation}
+                  />
                 </div>
               </div>
 
@@ -867,6 +1033,13 @@ const handleTeamRightClick = (e, teamId) => {
 
                     {annotations.length > 0 && (
                       <div className="flex gap-2">
+                        <button
+                          onClick={() => setShowSummary(true)}
+                          className="bg-gray-600 hover:bg-gray-500 px-3 py-1 text-xs rounded flex items-center gap-1"
+                        >
+                          <BarChart3 size={14} />
+                          Summary
+                        </button>
                         <button
                           onClick={exportAnnotationsJSON}
                           className="bg-green-600 hover:bg-green-700 px-3 py-1 text-xs rounded flex items-center gap-1"
@@ -896,11 +1069,47 @@ const handleTeamRightClick = (e, teamId) => {
                     />
                   </div>
 
+                  {annotations.length > 0 && (
+                    <div className="flex items-center gap-2 mb-2 text-xs">
+                      <select
+                        value={filterType}
+                        onChange={(e) => setFilterType(e.target.value)}
+                        className="bg-gray-700 text-white px-1 py-1 rounded border border-gray-600 min-w-0 flex-1"
+                      >
+                        <option value="all">All actions</option>
+                        {annotationTypes.map((t) => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
+                      <select
+                        value={filterTeam}
+                        onChange={(e) => setFilterTeam(e.target.value)}
+                        className="bg-gray-700 text-white px-1 py-1 rounded border border-gray-600 min-w-0 flex-1"
+                      >
+                        <option value="all">All teams</option>
+                        {annotationTeams.map((t) => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={clipMode ? () => stopClips() : startClips}
+                        disabled={!clipMode && visibleAnnotations.length === 0}
+                        className={`px-2 py-1 rounded font-semibold whitespace-nowrap ${
+                          clipMode ? 'bg-red-600 hover:bg-red-500' : 'bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600'
+                        }`}
+                      >
+                        {clipMode ? 'Stop clips' : `Play clips (${visibleAnnotations.length})`}
+                      </button>
+                    </div>
+                  )}
+
                   {annotations.length === 0 ? (
                     <p className="text-gray-400 text-center py-6 text-sm">No annotations yet.</p>
+                  ) : visibleAnnotations.length === 0 ? (
+                    <p className="text-gray-400 text-center py-6 text-sm">No annotations match the filters.</p>
                   ) : (
                     <div className="space-y-2 overflow-y-auto flex-1 pr-2">
-                      {annotations.map((ann) => (
+                      {visibleAnnotations.map((ann) => (
                         <div
                           key={ann.id}
                           className="bg-gray-700 rounded-lg p-3 flex items-center justify-between hover:bg-gray-600 transition group"
@@ -909,7 +1118,7 @@ const handleTeamRightClick = (e, teamId) => {
                             onClick={() => seekToAnnotation(ann.timestamp)}
                             className="flex items-center gap-2 flex-1 text-left"
                           >
-                            <span className={`${ann.color} px-2 py-1 rounded-full text-xs font-semibold`}>
+                            <span {...colorProps(ann.color, 'px-2 py-1 rounded-full text-xs font-semibold')}>
                               {ann.formattedTime}
                             </span>
 
@@ -919,7 +1128,22 @@ const handleTeamRightClick = (e, teamId) => {
                               </span>
                             )}
 
-                            <span className="font-medium text-sm">{ann.label}</span>
+                            <span className="font-medium text-sm">
+                              {ann.label}
+                              {ann.descriptor && <span className="text-gray-300"> ({ann.descriptor})</span>}
+                              {ann.activeTeamName && (
+                                <span className="text-gray-400 text-xs font-normal"> · {ann.activeTeamName}</span>
+                              )}
+                              {ann.note && <span className="block text-xs text-gray-400 font-normal">{ann.note}</span>}
+                            </span>
+                          </button>
+
+                          <button
+                            onClick={() => setEditingAnnotation(ann)}
+                            className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-white mr-2"
+                            title="Edit annotation"
+                          >
+                            <Pencil size={15} />
                           </button>
 
                           <button
@@ -971,6 +1195,50 @@ const handleTeamRightClick = (e, teamId) => {
 
             {/* RIGHT SIDE — ACTION BUTTONS */}
             <div className="flex-[3] overflow-y-auto">
+              {/* GAME CLOCK */}
+              <div className="mb-4 p-3 bg-gray-700 rounded">
+                <h3 className="text-sm font-bold mb-2">Game Clock</h3>
+                <input
+                  type="text"
+                  value={gameClockTime}
+                  onChange={(e) => setGameClockTime(e.target.value)}
+                  placeholder="e.g. 10:45 Q2"
+                  className="w-full bg-gray-800 text-white text-sm px-2 py-1 rounded border border-gray-600 focus:border-blue-500"
+                />
+              </div>
+
+              {/* TAGGING PANELS */}
+              <div className="mb-4 p-3 bg-gray-700 rounded">
+                <h3 className="text-sm font-bold mb-2">Tagging Panel</h3>
+                <select
+                  value={activePanel.id}
+                  onChange={(e) => setActivePanelId(e.target.value)}
+                  className="w-full bg-gray-800 text-white text-sm px-2 py-1 rounded border border-gray-600 mb-2"
+                >
+                  {panels.map((pn) => (
+                    <option key={pn.id} value={pn.id}>
+                      {pn.name} ({pn.actions.length})
+                    </option>
+                  ))}
+                </select>
+                <div className="flex flex-wrap gap-1 text-xs">
+                  {[
+                    ['New', newPanel],
+                    ['Rename', renamePanel],
+                    ['Duplicate', duplicatePanel],
+                    ['Delete', deletePanel],
+                    ['Export', () => exportPanels(false)],
+                    ['Export all', () => exportPanels(true)],
+                    ['Import', () => panelImportRef.current && panelImportRef.current.click()],
+                    ['Reset', resetPanel],
+                  ].map(([text, fn]) => (
+                    <button key={text} onClick={fn} className="bg-gray-800 hover:bg-gray-600 px-2 py-1 rounded">
+                      {text}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* TEAM SELECTORS */}
               <div className="mb-4 p-3 bg-gray-700 rounded">
                 <h3 className="text-sm font-bold mb-2">Team</h3>
@@ -1019,26 +1287,85 @@ const handleTeamRightClick = (e, teamId) => {
                         +
                       </button>
                     </div>
+                    <button
+                      onClick={() => setShowBulkAdd(true)}
+                      className="mt-2 text-xs text-blue-400 hover:text-blue-300"
+                    >
+                      Bulk add (comma separated)...
+                    </button>
                   </div>
 
                   {/* ACTION BUTTONS GRID */}
-                  <div className="grid grid-cols-2 gap-2">
-                    {actions.map((action) => (
-                      <button
-                        key={action.id}
-                        onClick={() => handleActionClick(action)}
-                        onContextMenu={(e) => handleRightClick(e, action.id)} // RIGHT CLICK TO RENAME
-                        className={`group relative p-3 rounded-lg text-white font-bold text-sm transition-all active:scale-95 ${action.color} hover:brightness-110 shadow-lg`}
-                      >
-                        {action.label}
-                        
-                        {/* Tooltip or indicator that it's renameable */}
-                        <span className="absolute top-0 right-1 text-[8px] opacity-0 group-hover:opacity-40">
-                          R-Click
-                        </span>
-                      </button>
+                  {actions.length === 0 && (
+                    <p className="text-gray-400 text-sm text-center">No buttons in this panel yet.</p>
+                  )}
+                  {[...new Set(actions.map((a) => a.group || ''))]
+                    .sort((x, y) => (x === '' ? -1 : y === '' ? 1 : 0))
+                    .map((groupName) => (
+                      <div key={groupName || '__ungrouped'}>
+                        {groupName && (
+                          <button
+                            onClick={() => setCollapsedGroups((prev) => ({ ...prev, [groupName]: !prev[groupName] }))}
+                            onDragOver={(e) => dragActionId && e.preventDefault()}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              moveAction(dragActionId, null, groupName);
+                              setDragActionId(null);
+                            }}
+                            className="w-full flex items-center gap-1 text-xs font-bold text-gray-400 uppercase mb-1 hover:text-white"
+                          >
+                            <span>{collapsedGroups[groupName] ? '▸' : '▾'}</span>
+                            {groupName}
+                            <span className="text-gray-500">({actions.filter((a) => (a.group || '') === groupName).length})</span>
+                          </button>
+                        )}
+                        {!(groupName && collapsedGroups[groupName]) && (
+                          <div className="grid grid-cols-2 gap-2">
+                            {actions
+                              .filter((a) => (a.group || '') === groupName)
+                              .map((action) => (
+                                <div
+                                  key={action.id}
+                                  draggable
+                                  onDragStart={() => setDragActionId(action.id)}
+                                  onDragOver={(e) => dragActionId && e.preventDefault()}
+                                  onDrop={(e) => {
+                                    e.preventDefault();
+                                    moveAction(dragActionId, action.id);
+                                    setDragActionId(null);
+                                  }}
+                                  onDragEnd={() => setDragActionId(null)}
+                                  className={`group relative ${dragActionId === action.id ? 'opacity-40' : ''}`}
+                                >
+                                  <button
+                                    onClick={() => handleActionClick(action)}
+                                    onContextMenu={(e) => handleRightClick(e, action.id)} // RIGHT CLICK TO EDIT
+                                    title={action.definition || action.label}
+                                    {...colorProps(
+                                      action.color,
+                                      'relative w-full h-full p-3 rounded-lg text-white font-bold text-sm transition-all active:scale-95 hover:brightness-110 shadow-lg'
+                                    )}
+                                  >
+                                    {action.label}
+                                    {action.hotkey && (
+                                      <span className="absolute bottom-0.5 left-1.5 text-[9px] font-mono uppercase opacity-70">
+                                        {action.hotkey}
+                                      </span>
+                                    )}
+                                  </button>
+                                  <button
+                                    onClick={() => setEditingAction(action)}
+                                    className="absolute top-1 right-1 p-0.5 rounded bg-black/30 text-white opacity-0 group-hover:opacity-90"
+                                    title="Edit button"
+                                  >
+                                    <Pencil size={11} />
+                                  </button>
+                                </div>
+                              ))}
+                          </div>
+                        )}
+                      </div>
                     ))}
-                  </div>
                 {/* </div> */}
 
                 {/* CUSTOM ANNOTATION */}
@@ -1065,6 +1392,78 @@ const handleTeamRightClick = (e, teamId) => {
           </div>
         )}
       </div>
+        {editingAction && (
+          <ActionEditModal
+            key={editingAction.id}
+            action={editingAction}
+            groups={[...new Set(actions.map((a) => a.group || ''))]}
+            takenHotkeys={Object.fromEntries(
+              actions.filter((a) => a.hotkey && a.id !== editingAction.id).map((a) => [a.hotkey, a.label])
+            )}
+            onSave={saveActionEdit}
+            onDelete={deleteAction}
+            onClose={() => setEditingAction(null)}
+          />
+        )}
+
+        {showBulkAdd && (
+          <BulkAddModal
+            existingLabels={actions.map((a) => a.label)}
+            groups={[...new Set(actions.map((a) => a.group || ''))]}
+            onAdd={addBulkActions}
+            onClose={() => setShowBulkAdd(false)}
+          />
+        )}
+
+        {descriptorPrompt && (
+          <DescriptorModal
+            action={descriptorPrompt.action}
+            onPick={(descriptor) => {
+              addAnnotation(descriptorPrompt.action, { timestamp: descriptorPrompt.timestamp, descriptor });
+              setDescriptorPrompt(null);
+            }}
+            onClose={() => setDescriptorPrompt(null)}
+          />
+        )}
+
+        {editingAnnotation && (
+          <AnnotationEditModal
+            key={editingAnnotation.id}
+            annotation={editingAnnotation}
+            onSave={saveAnnotationEdit}
+            onClose={() => setEditingAnnotation(null)}
+          />
+        )}
+
+        {showSummary && (
+          <SummaryModal
+            annotations={annotations}
+            teamNames={teams.map((t) => t.name)}
+            onExport={exportSummaryCSV}
+            onClose={() => setShowSummary(false)}
+          />
+        )}
+
+        {toast && (
+          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[60] bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 shadow-2xl flex items-center gap-3 text-sm">
+            <span>{toast.message}</span>
+            {toast.undo && (
+              <button
+                onClick={() => {
+                  toast.undo();
+                  setToast(null);
+                }}
+                className="text-blue-400 hover:text-blue-300 font-bold"
+              >
+                Undo
+              </button>
+            )}
+            <button onClick={() => setToast(null)} className="text-gray-400 hover:text-white">
+              ×
+            </button>
+          </div>
+        )}
+
         {activeShot && (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
       <div className="bg-gray-800 p-6 rounded-xl border border-gray-600 w-96 shadow-2xl">
