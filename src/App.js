@@ -59,9 +59,6 @@ export default function VideoAnnotator() {
   const [activeTeamId, setActiveTeamId] = useState('team-a');
   const [folderFiles, setFolderFiles] = useState([]);
   const [currentFileIndex, setCurrentFileIndex] = useState(null);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [processedOverlay, setProcessedOverlay] = useState(null);
-  const [currentBoxes, setCurrentBoxes] = useState([]);
   const [newActionLabel, setNewActionLabel] = useState('');
 
   // buttons of the current panel
@@ -115,6 +112,11 @@ export default function VideoAnnotator() {
   const modalOpenRef = useRef(false);
   const lastIdRef = useRef(0);
   const liveBusyRef = useRef(false);
+  const autoDetectRef = useRef(null);
+  const detectKeyRef = useRef('');
+  const areaDrawnRef = useRef(false);
+  const readFailsRef = useRef(0);
+  const lastRedetectRef = useRef(0);
   const seekEpochRef = useRef(0);
   const rerunRef = useRef(false);
   const liveReadRef = useRef(null);
@@ -147,6 +149,19 @@ export default function VideoAnnotator() {
   useEffect(() => {
     if (videoKey) saveScoreArea(videoKey, scoreArea);
   }, [videoKey, scoreArea]);
+
+  // look for the scoreboard by itself when its area is drawn, or when a video with a saved area opens
+  useEffect(() => {
+    if (!scoreArea || !videoSrc || !duration) return undefined;
+    const key = `${videoKey}|${JSON.stringify(scoreArea)}`;
+    if (detectKeyRef.current === key) return undefined;
+    detectKeyRef.current = key;
+    if (!areaDrawnRef.current && scoreBoxes.a && scoreBoxes.b) return undefined;
+    areaDrawnRef.current = false;
+    const timer = setTimeout(() => autoDetectRef.current && autoDetectRef.current(), 400);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scoreArea, videoKey, videoSrc, duration]);
 
   useEffect(() => {
     if (!liveRead) return undefined;
@@ -247,8 +262,6 @@ export default function VideoAnnotator() {
       setScoreText('');
       setScoreValues(null);
       guardRef.current.reset();
-      setCurrentBoxes([]);
-      setProcessedOverlay(null);
       setCurrentTime(0);
       setPlaybackSpeed(0.5);
       setVolume(1);
@@ -358,8 +371,6 @@ const handleTeamRightClick = (e, teamId) => {
     setScoreText('');
     setScoreValues(null);
     guardRef.current.reset();
-    setCurrentBoxes([]);
-    setProcessedOverlay(null);
     setCurrentTime(0);
     setPlaybackSpeed(0.5);
     setVolume(1);
@@ -373,8 +384,6 @@ const handleTeamRightClick = (e, teamId) => {
     if (!videoRef.current) return;
     if (isPlaying) videoRef.current.pause();
     else {
-      setProcessedOverlay(null); // clear the tracker view
-      setCurrentBoxes([]); // old boxes don't match the new frame
       videoRef.current.play();
     }
     setIsPlaying(!isPlaying);
@@ -392,7 +401,6 @@ const handleTeamRightClick = (e, teamId) => {
     const { start } = clip.list[index];
     videoRef.current.currentTime = start;
     setCurrentTime(start);
-    setProcessedOverlay(null);
     const p = videoRef.current.play();
     if (p && p.catch) p.catch(() => {});
     setIsPlaying(true);
@@ -459,8 +467,6 @@ const handleTeamRightClick = (e, teamId) => {
     stopClips(false);
     videoRef.current.currentTime = newTime;
     setCurrentTime(newTime);
-    setProcessedOverlay(null);
-    setCurrentBoxes([]);
   };
 
   const handleSpeedChange = (speed) => {
@@ -521,7 +527,6 @@ const handleTeamRightClick = (e, teamId) => {
     const lead = Number(action.lead) || 0;
     const lag = Number(action.lag) || 0;
     const team = teams.find((t) => t.id === activeTeamId);
-    const players = currentBoxes.filter((b) => b.playerName).map((b) => b.playerName);
     return {
       id: nextId(),
       type: actionType(action),
@@ -536,9 +541,8 @@ const handleTeamRightClick = (e, teamId) => {
       ...(scoreText && scoreValues ? { scores: scoreValues } : {}),
       activeTeamName: team ? team.name : '',
       ...(descriptor ? { descriptor } : {}),
-      players,
       note: '',
-      metadata: { ...(metadata || {}), frameDetections: currentBoxes },
+      metadata: metadata || {},
     };
   };
 
@@ -782,14 +786,9 @@ const handleTeamRightClick = (e, teamId) => {
   const exportAnnotationsCSV = () => {
     const cleanAnnotations = getCleanAnnotations();
     // new columns go at the end
-    const headers = ['Timestamp', 'Game Clock', 'Team', 'Action', 'Label', 'Start', 'End', 'Descriptor', 'Players', 'Note', 'Scoreboard'];
+    const headers = ['Timestamp', 'Game Clock', 'Team', 'Action', 'Label', 'Start', 'End', 'Descriptor', 'Note', 'Scoreboard'];
 
     const csvRows = cleanAnnotations.map((ann) => {
-      const meta = ann.metadata || {};
-      const players = ann.players && ann.players.length
-        ? ann.players
-        : (meta.frameDetections || []).filter((d) => d.playerName).map((d) => d.playerName);
-
       return [
         ann.formattedTime,
         ann.gameClockTime || '',
@@ -799,7 +798,6 @@ const handleTeamRightClick = (e, teamId) => {
         ann.startTime !== undefined ? ann.startTime.toFixed(2) : '',
         ann.endTime !== undefined ? ann.endTime.toFixed(2) : '',
         csvCell(ann.descriptor || ''),
-        csvCell(players.join('; ')),
         csvCell(ann.note || ''),
         csvCell(ann.scoreboard || ''),
       ].join(',');
@@ -934,10 +932,10 @@ const handleTeamRightClick = (e, teamId) => {
   };
 
   // looks at the tagged scoreboard in a few moments of the video and works out where the names, scores and clock are
-  const autoDetectScoreboard = async () => {
+  const autoDetectScoreboard = async (quiet = false) => {
     const video = videoRef.current;
     if (!video || !scoreArea) {
-      setSelectingRegion('scoreArea');
+      if (!quiet) setSelectingRegion('scoreArea');
       return;
     }
     setDetectBusy(true);
@@ -974,7 +972,7 @@ const handleTeamRightClick = (e, teamId) => {
 
       const result = await detectScoreboard(pictures, { text: recognizeText }, createCellReader);
       if (!result.found) {
-        setToast({ message: "Couldn't work out the scoreboard. Draw the score boxes yourself with Set score A and Set score B." });
+        if (!quiet) setToast({ message: "Couldn't work out the scoreboard. Open Manual options and draw the score boxes yourself." });
         return;
       }
 
@@ -1002,16 +1000,18 @@ const handleTeamRightClick = (e, teamId) => {
       if (result.teams.length) parts.push(result.teams.map((t) => t.name).join(' and '));
       if (result.clockBox) parts.push('the clock');
       const missing =
-        result.teams.length < 2 ? ' Only found ' + result.teams.length + ' team, draw the other score box with Set score A or B.' : '';
-      setToast({ message: `Found ${parts.join(' and ')}. Check the dashed boxes on the video.${missing}` });
+        result.teams.length < 2 ? ' Only found ' + result.teams.length + ' team, draw the other score box in Manual options.' : '';
+      if (!quiet) setToast({ message: `Found ${parts.join(' and ')}.${missing}` });
     } catch (err) {
-      setToast({ message: `Auto-detect failed: ${err.message}. You can draw the boxes yourself.` });
+      if (!quiet) setToast({ message: `Auto-detect failed: ${err.message}. You can draw the boxes yourself.` });
     } finally {
       hidden.removeAttribute('src');
       hidden.load();
       setDetectBusy(false);
     }
   };
+
+  autoDetectRef.current = autoDetectScoreboard;
 
   const readScoreboard = async () => {
     const canvases = [captureBox(scoreBoxes.a), captureBox(scoreBoxes.b)];
@@ -1068,7 +1068,7 @@ const handleTeamRightClick = (e, teamId) => {
   // fills the clock and score boxes from the video, only keeping readings that make sense
   liveReadRef.current = async (force) => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || video.seeking) return;
     if (liveBusyRef.current) {
       // a seek while a read is running: read again as soon as it finishes
       if (force) rerunRef.current = true;
@@ -1097,6 +1097,14 @@ const handleTeamRightClick = (e, teamId) => {
       if (boxes[0] || boxes[1]) {
         const values = await readScoreBoxes(boxes);
         if (epoch !== seekEpochRef.current) return;
+        if (scoreArea && !detectBusy) {
+          readFailsRef.current = values.some((v, i) => boxes[i] && v === null) ? readFailsRef.current + 1 : 0;
+          if (readFailsRef.current >= 6 && Date.now() - lastRedetectRef.current > 30000) {
+            readFailsRef.current = 0;
+            lastRedetectRef.current = Date.now();
+            autoDetectRef.current(true);
+          }
+        }
         const accepted = settleScores(values, boxes);
         if (accepted) {
           setScoreValues(accepted);
@@ -1113,60 +1121,6 @@ const handleTeamRightClick = (e, teamId) => {
       }
     }
   };
-
-  const analyzeCurrentFrame = async () => {
-    if (!videoRef.current) return;
-
-    // 1. Capture the current frame to a canvas
-    const canvas = document.createElement('canvas');
-    canvas.width = videoRef.current.videoWidth;
-    canvas.height = videoRef.current.videoHeight;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-
-    // 2. Convert to a Blob (image file)
-    canvas.toBlob(async (blob) => {
-      const formData = new FormData();
-      formData.append('image', blob, 'frame.jpg');
-      formData.append('conf', '0.25');
-
-      setIsProcessing(true);
-      try {
-        const response = await fetch('http://localhost:5001/run-inference-frame', {
-          method: 'POST',
-          body: formData, // Send as multi-part form data
-        });
-
-        const data = await response.json();
-        if (data.processedImageUrl) {
-          setProcessedOverlay(`${data.processedImageUrl}?t=${Date.now()}`);
-        }
-        if (data.boxes) {
-          setCurrentBoxes(data.boxes || [])
-        }
-      } catch (err) {
-        console.error("Frame analysis failed:", err);
-      } finally {
-        setIsProcessing(false);
-      }
-    }, 'image/jpeg');
-  };
-
-  const savePlayerTag = (index, name) => {
-    setCurrentBoxes(prevBoxes => {
-      // Create a deep copy of the boxes array
-      const newBoxes = [...prevBoxes];
-      
-      // Update exactly the one at the index clicked
-      newBoxes[index] = { 
-        ...newBoxes[index], 
-        playerName: name 
-      };
-      
-      return newBoxes;
-      }); 
-  };
-
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 text-white p-4">
@@ -1235,10 +1189,11 @@ const handleTeamRightClick = (e, teamId) => {
                     onTimeUpdate={handleTimeUpdate}
                     onLoadedMetadata={handleLoadedMetadata}
                     onClick={handleVideoClick}
-                    className={`w-full rounded-lg cursor-pointer ${processedOverlay ? 'opacity-0' : 'opacity-100'}`}
+                    className="w-full rounded-lg cursor-pointer"
                     style={{ maxHeight: '60vh' }}
                     onEnded={handleVideoEnded}
-                    onSeeked={() => {
+                    onSeeking={() => {
+                      // the picture is not at the new time yet, so anything read now would be old
                       seekEpochRef.current += 1;
                       const hasAreas = clockKeys.length > 0 || scoreBoxes.a || scoreBoxes.b;
                       // a big jump in the video makes the old clock and score wrong, so clear them right away
@@ -1247,6 +1202,9 @@ const handleTeamRightClick = (e, teamId) => {
                         setScoreText('');
                         setScoreValues(null);
                       }
+                    }}
+                    onSeeked={() => {
+                      seekEpochRef.current += 1;
                       if (liveRead && liveReadRef.current) liveReadRef.current(true);
                     }}
                   />
@@ -1266,7 +1224,10 @@ const handleTeamRightClick = (e, teamId) => {
                       onDone={(region) => {
                         if (selectingRegion === 'scoreA') setScoreBoxes((prev) => ({ ...prev, a: region }));
                         else if (selectingRegion === 'scoreB') setScoreBoxes((prev) => ({ ...prev, b: region }));
-                        else if (selectingRegion === 'scoreArea') setScoreArea(region);
+                        else if (selectingRegion === 'scoreArea') {
+                          areaDrawnRef.current = true;
+                          setScoreArea(region);
+                        }
                         else addClockKey(region);
                         setSelectingRegion(false);
                       }}
@@ -1274,7 +1235,7 @@ const handleTeamRightClick = (e, teamId) => {
                     />
                   )}
 
-                  {clockRegion && !selectingRegion && !isPlaying && !processedOverlay && videoRef.current && (() => {
+                  {clockRegion && !selectingRegion && !isPlaying && videoRef.current && (() => {
                     const c = contentRect(videoRef.current);
                     return (
                       <div
@@ -1290,7 +1251,7 @@ const handleTeamRightClick = (e, teamId) => {
                     );
                   })()}
 
-                  {scoreArea && !selectingRegion && !isPlaying && !processedOverlay && videoRef.current && (() => {
+                  {scoreArea && !selectingRegion && !isPlaying && videoRef.current && (() => {
                     const c = contentRect(videoRef.current);
                     return (
                       <div
@@ -1306,7 +1267,7 @@ const handleTeamRightClick = (e, teamId) => {
                     );
                   })()}
 
-                  {!selectingRegion && !isPlaying && !processedOverlay && videoRef.current &&
+                  {!selectingRegion && !isPlaying && videoRef.current &&
                     ['a', 'b'].map((key) => {
                       const box = scoreBoxes[key];
                       if (!box) return null;
@@ -1325,50 +1286,6 @@ const handleTeamRightClick = (e, teamId) => {
                         />
                       );
                     })}
-
-                  {processedOverlay && (
-                    <div className="absolute inset-0 z-10">
-                      <img
-                        alt=""
-                        src={processedOverlay}
-                        className="w-full h-full object-fill pointer-events-none"
-                      />
-
-                      {currentBoxes.map((box, index) => {
-                        const isTagged = !!box.playerName;
-                        
-                        return (
-                          <div
-                            key={index}
-                            // MOVE THE CLICK HANDLER HERE
-                            onClick={(e) => {
-                              e.stopPropagation(); // Prevents clicking "through" to the video
-                              const name = prompt(`Tag player for box #${index + 1}:`);
-                              if (name) {
-                                savePlayerTag(index, name);
-                              }
-                            }}
-                            className={`absolute border-2 transition-all duration-200 cursor-pointer ${
-                              isTagged ? 'border-green-500 bg-green-500/20' : 'border-transparent hover:border-yellow-400'
-                            }`}
-                            style={{
-                              left: `${(box.x1 / (videoRef.current?.videoWidth || 1)) * 100}%`,
-                              top: `${(box.y1 / (videoRef.current?.videoHeight || 1)) * 100}%`,
-                              width: `${((box.x2 - box.x1) / (videoRef.current?.videoWidth || 1)) * 100}%`,
-                              height: `${((box.y2 - box.y1) / (videoRef.current?.videoHeight || 1)) * 100}%`,
-                              zIndex: 20 // Ensure boxes are above the image
-                            }}
-                          >
-                            {isTagged && (
-                              <span className="absolute -top-6 left-0 bg-green-500 text-black text-[10px] font-bold px-1 rounded whitespace-nowrap">
-                                {box.playerName}
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
 
                   {!videoSrc && (
                     <div className="text-gray-400 text-lg text-center">
@@ -1440,25 +1357,6 @@ const handleTeamRightClick = (e, teamId) => {
                         className="w-24 accent-blue-400"
                       />
                     </div>
-
-                    <button
-                      onClick={analyzeCurrentFrame}
-                      disabled={isProcessing || !videoSrc}
-                      className={`px-3 py-1 rounded-lg font-bold flex items-center gap-2 ${
-                        isProcessing 
-                          ? 'bg-gray-700 cursor-wait' 
-                          : 'bg-gray-600 hover:bg-green-700 shadow-lg shadow-green-700/20'
-                      }`}
-                    >
-                      {isProcessing ? (
-                        <span className="animate-pulse">Processing Video...</span>
-                      ) : (
-                        <>
-                          <Play size={16} fill="currentColor" />
-                          Run Tracking Model
-                        </>
-                      )}
-                    </button>
 
                     <button
                       onClick={() => fileInputRef.current && fileInputRef.current.click()}
@@ -1649,15 +1547,15 @@ const handleTeamRightClick = (e, teamId) => {
 
             {/* RIGHT SIDE — ACTION BUTTONS */}
             <div className="flex-[3] overflow-y-auto">
-              {/* GAME CLOCK */}
+              {/* GAME CLOCK AND SCOREBOARD */}
               <div className="mb-4 p-3 bg-gray-700 rounded">
-                <h3 className="text-sm font-bold mb-2">Game Clock</h3>
                 <div className="flex gap-2 mb-2">
                   <input
                     type="text"
                     value={gameClockTime}
                     onChange={(e) => setGameClockTime(e.target.value)}
                     placeholder="e.g. 10:45 Q2"
+                    title="Game clock"
                     className="flex-1 min-w-0 bg-gray-800 text-white text-sm px-2 py-1 rounded border border-gray-600 focus:border-blue-500"
                   />
                   <input
@@ -1665,107 +1563,88 @@ const handleTeamRightClick = (e, teamId) => {
                     value={period}
                     onChange={(e) => setPeriod(e.target.value)}
                     placeholder="Q2"
-                    title="Period added to clocks read by OCR"
+                    title="Period added to the clock when it is read from the video"
                     className="w-14 bg-gray-800 text-white text-sm px-2 py-1 rounded border border-gray-600 focus:border-blue-500"
                   />
                 </div>
+                <input
+                  type="text"
+                  value={scoreText}
+                  onChange={(e) => {
+                    setScoreText(e.target.value);
+                    setScoreValues(null);
+                  }}
+                  placeholder="e.g. LAL 88 - BOS 84"
+                  title="Scoreboard"
+                  className="w-full bg-gray-800 text-white text-sm px-2 py-1 rounded border border-gray-600 focus:border-blue-500 mb-2"
+                />
                 <div className="flex flex-wrap items-center gap-1 text-xs">
                   <button
-                    onClick={readGameClock}
-                    disabled={clockBusy || !videoSrc}
-                    className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
-                  >
-                    {clockBusy ? 'Reading...' : 'Read from video'}
-                  </button>
-                  <button
-                    onClick={findClock}
-                    disabled={clockBusy || !videoSrc}
-                    className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
-                    title="Search the whole frame for the clock and remember where it is at this moment"
-                  >
-                    Find clock
-                  </button>
-                  <button
-                    onClick={() => setSelectingRegion('clock')}
+                    onClick={() => setSelectingRegion('scoreArea')}
                     disabled={!videoSrc}
-                    className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
-                    title="Draw a box around the game clock"
+                    className="bg-blue-700 hover:bg-blue-600 disabled:opacity-60 px-2 py-1 rounded font-semibold"
+                    title="Draw a box around the scoreboard. It is read automatically. The box can include the clock or not"
                   >
-                    Set clock area
+                    {scoreArea ? 'Redraw scoreboard' : 'Set scoreboard area'}
                   </button>
-                  <button
-                    onClick={() => setClockKeys([])}
-                    disabled={clockKeys.length === 0}
-                    className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
-                  >
-                    Clear clock area
-                  </button>
-                  <button
-                    onClick={() => setGameClockTime('')}
-                    disabled={!gameClockTime}
-                    className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
-                  >
-                    Clear text
-                  </button>
-                  <label className="flex items-center gap-1 text-gray-300" title="Turn on if the clock moves around the screen, then set the area at a few points">
-                    <input type="checkbox" checked={!clockStatic} onChange={(e) => setClockStatic(!e.target.checked)} />
-                    Camera moves
-                  </label>
-                  <label className="flex items-center gap-1 text-gray-300" title="Keep the clock and scoreboard boxes up to date while the video plays">
+                  {scoreArea && (
+                    <>
+                      <button
+                        onClick={() => autoDetectScoreboard()}
+                        disabled={detectBusy || !videoSrc}
+                        className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
+                        title="Look at the scoreboard again"
+                      >
+                        {detectBusy ? 'Looking...' : 'Re-detect'}
+                      </button>
+                      <button
+                        onClick={() => setScoreArea(null)}
+                        className="bg-gray-800 hover:bg-gray-600 px-2 py-1 rounded"
+                      >
+                        Clear
+                      </button>
+                    </>
+                  )}
+                  <label className="flex items-center gap-1 text-gray-300 ml-auto" title="Keep the clock and scores up to date while the video plays">
                     <input type="checkbox" checked={liveRead} onChange={(e) => setLiveRead(e.target.checked)} />
-                    Live read
+                    Live
                   </label>
-                  <label className="flex items-center gap-1 ml-auto text-gray-300" title="Read the clock and scoreboard for every new tag">
+                  <label className="flex items-center gap-1 text-gray-300" title="Read the clock and scores for every new tag and save them on it">
                     <input type="checkbox" checked={autoClock} onChange={(e) => setAutoClock(e.target.checked)} />
-                    Auto on tag
+                    On tag
                   </label>
                 </div>
-                <p className="text-[11px] text-gray-400 mt-2">
-                  {clockKeys.length === 0
-                    ? 'No clock area yet. "Find clock" finds it, or draw it with "Set clock area".'
-                    : clockStatic
-                    ? 'The clock area is fixed for the whole video.'
-                    : `${clockKeys.length} point${clockKeys.length === 1 ? '' : 's'}. Set the area again at a few places and it moves between them.`}
-                </p>
 
-                <div className="mt-3 pt-3 border-t border-gray-600">
-                  <h3 className="text-sm font-bold mb-2">Scoreboard</h3>
-                  <input
-                    type="text"
-                    value={scoreText}
-                    onChange={(e) => {
-                      setScoreText(e.target.value);
-                      setScoreValues(null);
-                    }}
-                    placeholder="e.g. LAL 88 - BOS 84"
-                    className="w-full bg-gray-800 text-white text-sm px-2 py-1 rounded border border-gray-600 focus:border-blue-500"
-                  />
-                  <div className="flex flex-wrap items-center gap-1 text-xs mt-2">
-                    <span className="text-gray-400 w-full">Automatic</span>
+                <details className="mt-2 text-xs">
+                  <summary className="cursor-pointer text-gray-400 hover:text-white">Manual options</summary>
+                  <div className="flex flex-wrap items-center gap-1 mt-2">
                     <button
-                      onClick={() => setSelectingRegion('scoreArea')}
+                      onClick={() => setSelectingRegion('clock')}
                       disabled={!videoSrc}
                       className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
-                      title="Draw a box around the whole scoreboard"
+                      title="Draw a box around the game clock"
                     >
-                      {scoreArea ? 'Redraw scoreboard area' : 'Set scoreboard area'}
+                      Set clock area
                     </button>
                     <button
-                      onClick={autoDetectScoreboard}
-                      disabled={detectBusy || !videoSrc || !scoreArea}
-                      className="bg-blue-700 hover:bg-blue-600 disabled:opacity-60 px-2 py-1 rounded font-semibold"
-                      title="Finds the team names, the score boxes and the clock inside the scoreboard area"
+                      onClick={findClock}
+                      disabled={clockBusy || !videoSrc}
+                      className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
+                      title="Search the whole picture for the clock"
                     >
-                      {detectBusy ? 'Looking...' : 'Auto-detect'}
+                      Find clock
                     </button>
                     <button
-                      onClick={() => setScoreArea(null)}
-                      disabled={!scoreArea}
+                      onClick={() => setClockKeys([])}
+                      disabled={clockKeys.length === 0}
                       className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
                     >
-                      Clear area
+                      Clear clock area
                     </button>
-                    <span className="text-gray-400 w-full mt-1">Manual</span>
+                    <label className="flex items-center gap-1 text-gray-300" title="Tick if the clock moves around the screen, then set its area at a few points in the video">
+                      <input type="checkbox" checked={!clockStatic} onChange={(e) => setClockStatic(!e.target.checked)} />
+                      Camera moves
+                    </label>
                     <button
                       onClick={() => setSelectingRegion('scoreA')}
                       disabled={!videoSrc}
@@ -1789,29 +1668,33 @@ const handleTeamRightClick = (e, teamId) => {
                     >
                       Clear boxes
                     </button>
-                    <span className="text-gray-400 w-full mt-1">Reading</span>
+                    <button
+                      onClick={readGameClock}
+                      disabled={clockBusy || !videoSrc}
+                      className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
+                    >
+                      {clockBusy ? 'Reading...' : 'Read clock'}
+                    </button>
                     <button
                       onClick={readScoreboard}
                       disabled={scoreBusy || !videoSrc}
                       className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
                     >
-                      {scoreBusy ? 'Reading...' : 'Read scoreboard'}
+                      {scoreBusy ? 'Reading...' : 'Read scores'}
                     </button>
                     <button
                       onClick={() => {
+                        setGameClockTime('');
                         setScoreText('');
                         setScoreValues(null);
                       }}
-                      disabled={!scoreText}
+                      disabled={!gameClockTime && !scoreText}
                       className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
                     >
                       Clear text
                     </button>
                   </div>
-                  <p className="text-[11px] text-gray-400 mt-2">
-                    Automatic: draw a box around the whole scoreboard, then Auto-detect. It finds the team names, the score boxes and the clock. Manual: if that doesn't work, draw a tight box around each score number yourself, and the clock with Set clock area.
-                  </p>
-                </div>
+                </details>
               </div>
 
               {/* TAGGING PANELS */}

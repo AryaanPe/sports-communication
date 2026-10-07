@@ -327,6 +327,23 @@ export async function detectScoreboard(canvases, ocr, createCellReader, debug) {
     }
   }
 
+  // a row that is much taller than the other one has the header stuck to it, so read the name from its bottom part
+  if (chosen.length === 2) {
+    const heights = chosen.map((c) => c.row.y1 - c.row.y0 + 1);
+    const small = Math.min(...heights);
+    for (const c of chosen) {
+      if (c.row.y1 - c.row.y0 + 1 <= small * 1.35) continue;
+      const box = { ...c.name.cell, y0: c.row.y1 - small + 1, y1: c.row.y1 };
+      const read = await readCell(medianCanvas(layout, box), {
+        whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+        pattern: /^[A-Z]{2,5}$/,
+        minVotes: 3,
+        minShare: 0.5,
+      });
+      if (read) c.name = { cell: box, read };
+    }
+  }
+
   const teams = chosen.map((c) => ({
     name: c.name.read.text,
     score: parseInt(c.score.read.text, 10),
@@ -351,6 +368,28 @@ export async function detectScoreboard(canvases, ocr, createCellReader, debug) {
         clockBox = box;
         break;
       }
+    }
+  }
+
+  // the clock can also sit in a team's row, to the right of the score
+  if (!clockBox) {
+    for (const c of chosen) {
+      for (const cell of c.row.cells) {
+        if (cell.x0 <= c.score.cell.x1 || cell.x1 - cell.x0 < (c.row.y1 - c.row.y0) * 1.2) continue;
+        const box = { x0: cell.x0, y0: c.row.y0, x1: cell.x1, y1: c.row.y1 };
+        for (const picture of canvases.slice(-3).reverse()) {
+          const crop = document.createElement('canvas');
+          crop.width = box.x1 - box.x0 + 1;
+          crop.height = box.y1 - box.y0 + 1;
+          crop.getContext('2d').drawImage(picture, box.x0, box.y0, crop.width, crop.height, 0, 0, crop.width, crop.height);
+          if (await clockText(ocr, crop)) {
+            clockBox = box;
+            break;
+          }
+        }
+        if (clockBox) break;
+      }
+      if (clockBox) break;
     }
   }
 

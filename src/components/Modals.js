@@ -272,9 +272,6 @@ export function AnnotationEditModal({ annotation, onSave, onClose }) {
           <label className={labelCls}>Note</label>
           <textarea className={inputCls} rows={3} value={note} onChange={(e) => setNote(e.target.value)} />
         </div>
-        {annotation.players && annotation.players.length > 0 && (
-          <p className="text-xs text-gray-400">Tagged players: {annotation.players.join(', ')}</p>
-        )}
         <div className="flex gap-2">
           <button onClick={onClose} className="ml-auto bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm">Cancel</button>
           <button onClick={save} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-sm font-bold">Save</button>
