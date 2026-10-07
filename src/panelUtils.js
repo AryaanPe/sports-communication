@@ -150,3 +150,87 @@ export function saveAnnotations(videoKey, annotations) {
     // ignore
   }
 }
+
+// clock regions are saved per video
+const clockKey = (videoKey) => `tc_clock_v2:${videoKey}`;
+const LAST_REGION_KEY = 'tc_clock_region_v1';
+
+export function loadClockKeys(videoKey) {
+  try {
+    const raw = localStorage.getItem(clockKey(videoKey));
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (Array.isArray(parsed) && parsed.length) return parsed;
+    // no regions yet, start from the last one used
+    const last = JSON.parse(localStorage.getItem(LAST_REGION_KEY));
+    if (last && typeof last.x === 'number') return [{ t: 0, x: last.x, y: last.y, w: last.w, h: last.h }];
+  } catch (e) {
+    // ignore
+  }
+  return [];
+}
+
+export function saveClockKeys(videoKey, keys) {
+  try {
+    if (keys.length) localStorage.setItem(clockKey(videoKey), JSON.stringify(keys));
+    else localStorage.removeItem(clockKey(videoKey));
+  } catch (e) {
+    // ignore
+  }
+}
+
+const scoreKey = (videoKey) => `tc_score_v2:${videoKey}`;
+const LAST_SCORE_KEY = 'tc_score_last_v2';
+const noBoxes = { a: null, b: null };
+
+export function loadScoreBoxes(videoKey) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(scoreKey(videoKey)));
+    if (saved && (saved.a || saved.b)) return { ...noBoxes, ...saved };
+    const last = JSON.parse(localStorage.getItem(LAST_SCORE_KEY));
+    if (last && (last.a || last.b)) return { ...noBoxes, ...last };
+  } catch (e) {
+    // ignore
+  }
+  return noBoxes;
+}
+
+export function saveScoreBoxes(videoKey, boxes) {
+  try {
+    if (boxes.a || boxes.b) {
+      localStorage.setItem(scoreKey(videoKey), JSON.stringify(boxes));
+      localStorage.setItem(LAST_SCORE_KEY, JSON.stringify(boxes));
+    } else {
+      localStorage.removeItem(scoreKey(videoKey));
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
+const scoreAreaKey = (videoKey) => `tc_score_area_v1:${videoKey}`;
+const LAST_SCORE_AREA_KEY = 'tc_score_area_last_v1';
+
+export function loadScoreArea(videoKey) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(scoreAreaKey(videoKey)));
+    if (saved && typeof saved.x === 'number') return saved;
+    const last = JSON.parse(localStorage.getItem(LAST_SCORE_AREA_KEY));
+    if (last && typeof last.x === 'number') return last;
+  } catch (e) {
+    // ignore
+  }
+  return null;
+}
+
+export function saveScoreArea(videoKey, area) {
+  try {
+    if (area) {
+      localStorage.setItem(scoreAreaKey(videoKey), JSON.stringify(area));
+      localStorage.setItem(LAST_SCORE_AREA_KEY, JSON.stringify(area));
+    } else {
+      localStorage.removeItem(scoreAreaKey(videoKey));
+    }
+  } catch (e) {
+    // ignore
+  }
+}

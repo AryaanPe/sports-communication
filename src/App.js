@@ -17,8 +17,19 @@ import {
   parseImportedPanels,
   loadAnnotations,
   saveAnnotations,
+  loadClockKeys,
+  saveClockKeys,
+  loadScoreBoxes,
+  saveScoreBoxes,
+  loadScoreArea,
+  saveScoreArea,
 } from './panelUtils';
 import Timeline from './components/Timeline';
+import RegionSelector from './components/RegionSelector';
+import { createScoreReader, createCellReader } from './scoreboard';
+import { detectScoreboard } from './scoreboardLayout';
+import { ReadingGuard } from './readingGuard';
+import { recognizeText, cropToCanvas, contentRect, parseClock, regionAt, findClockInCanvas, seekVideo } from './ocr';
 import {
   ActionEditModal,
   BulkAddModal,
@@ -80,6 +91,20 @@ export default function VideoAnnotator() {
   const [collapsedGroups, setCollapsedGroups] = useState({});
   const [dragActionId, setDragActionId] = useState(null);
   const [videoKey, setVideoKey] = useState(null);
+  const [clockKeys, setClockKeys] = useState([]);
+  const clockRegion = regionAt(clockKeys, currentTime);
+  const [selectingRegion, setSelectingRegion] = useState(false); // false, 'clock', 'scoreA', 'scoreB' or 'scoreArea'
+  const [clockStatic, setClockStatic] = useState(true);
+  const [scoreBoxes, setScoreBoxes] = useState({ a: null, b: null });
+  const [scoreValues, setScoreValues] = useState(null);
+  const [scoreArea, setScoreArea] = useState(null);
+  const [detectBusy, setDetectBusy] = useState(false);
+  const [scoreText, setScoreText] = useState('');
+  const [scoreBusy, setScoreBusy] = useState(false);
+  const [liveRead, setLiveRead] = useState(true);
+  const [autoClock, setAutoClock] = useState(false);
+  const [period, setPeriod] = useState('');
+  const [clockBusy, setClockBusy] = useState(false);
 
   const videoRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -89,6 +114,13 @@ export default function VideoAnnotator() {
   const hotkeyRef = useRef(null);
   const modalOpenRef = useRef(false);
   const lastIdRef = useRef(0);
+  const liveBusyRef = useRef(false);
+  const seekEpochRef = useRef(0);
+  const rerunRef = useRef(false);
+  const liveReadRef = useRef(null);
+  const guardRef = useRef(null);
+  const scoreReaderRef = useRef(null);
+  if (!guardRef.current) guardRef.current = new ReadingGuard();
 
   const nextId = () => {
     const id = Math.max(Date.now(), lastIdRef.current + 1);
@@ -97,12 +129,34 @@ export default function VideoAnnotator() {
   };
 
   modalOpenRef.current = !!(
-    activeShot || editingAction || showBulkAdd || descriptorPrompt || editingAnnotation || showSummary
+    selectingRegion || activeShot || editingAction || showBulkAdd || descriptorPrompt || editingAnnotation || showSummary
   );
 
   useEffect(() => {
     savePanels(panels, activePanelId);
   }, [panels, activePanelId]);
+
+  useEffect(() => {
+    if (videoKey) saveClockKeys(videoKey, clockKeys);
+  }, [videoKey, clockKeys]);
+
+  useEffect(() => {
+    if (videoKey) saveScoreBoxes(videoKey, scoreBoxes);
+  }, [videoKey, scoreBoxes]);
+
+  useEffect(() => {
+    if (videoKey) saveScoreArea(videoKey, scoreArea);
+  }, [videoKey, scoreArea]);
+
+  useEffect(() => {
+    if (!liveRead) return undefined;
+    if (!isPlaying) {
+      const once = setTimeout(() => liveReadRef.current && liveReadRef.current(), 300);
+      return () => clearTimeout(once);
+    }
+    const timer = setInterval(() => liveReadRef.current && liveReadRef.current(), 1500);
+    return () => clearInterval(timer);
+  }, [liveRead, isPlaying]);
 
   useEffect(() => {
     if (videoKey) saveAnnotations(videoKey, annotations);
@@ -187,6 +241,12 @@ export default function VideoAnnotator() {
       setVideoSrc(url);
       setVideoKey(file.name);
       setAnnotations(loadAnnotations(file.name));
+      setClockKeys(loadClockKeys(file.name));
+      setScoreBoxes(loadScoreBoxes(file.name));
+      setScoreArea(loadScoreArea(file.name));
+      setScoreText('');
+      setScoreValues(null);
+      guardRef.current.reset();
       setCurrentBoxes([]);
       setProcessedOverlay(null);
       setCurrentTime(0);
@@ -292,6 +352,12 @@ const handleTeamRightClick = (e, teamId) => {
     setVideoSrc(url);
     setVideoKey(key);
     setAnnotations(loadAnnotations(key));
+    setClockKeys(loadClockKeys(key));
+    setScoreBoxes(loadScoreBoxes(key));
+    setScoreArea(loadScoreArea(key));
+    setScoreText('');
+    setScoreValues(null);
+    guardRef.current.reset();
     setCurrentBoxes([]);
     setProcessedOverlay(null);
     setCurrentTime(0);
@@ -466,6 +532,8 @@ const handleTeamRightClick = (e, teamId) => {
       startTime: Math.max(0, ts - lead),
       endTime: duration ? Math.min(duration, ts + lag) : ts + lag,
       gameClockTime: gameClockTime || 'N/A',
+      ...(scoreText ? { scoreboard: scoreText } : {}),
+      ...(scoreText && scoreValues ? { scores: scoreValues } : {}),
       activeTeamName: team ? team.name : '',
       ...(descriptor ? { descriptor } : {}),
       players,
@@ -484,12 +552,14 @@ const handleTeamRightClick = (e, teamId) => {
 
     setAnnotations([newAnnotation, ...annotations]);
     setActiveShot(null);
+    autoReadClock(newAnnotation.id);
   };
 
   const addAnnotation = (action, options) => {
     if (!videoRef.current) return;
     const newAnnotation = buildAnnotation(action, options);
     setAnnotations((prev) => [newAnnotation, ...prev]);
+    autoReadClock(newAnnotation.id);
   };
 
   const addCustomAnnotation = () => {
@@ -500,6 +570,7 @@ const handleTeamRightClick = (e, teamId) => {
     );
     setAnnotations([newAnnotation, ...annotations]);
     setCustomAnnotation('');
+    autoReadClock(newAnnotation.id);
   };
 
   const addNewActionButton = () => {
@@ -711,7 +782,7 @@ const handleTeamRightClick = (e, teamId) => {
   const exportAnnotationsCSV = () => {
     const cleanAnnotations = getCleanAnnotations();
     // new columns go at the end
-    const headers = ['Timestamp', 'Game Clock', 'Team', 'Action', 'Label', 'Start', 'End', 'Descriptor', 'Players', 'Note'];
+    const headers = ['Timestamp', 'Game Clock', 'Team', 'Action', 'Label', 'Start', 'End', 'Descriptor', 'Players', 'Note', 'Scoreboard'];
 
     const csvRows = cleanAnnotations.map((ann) => {
       const meta = ann.metadata || {};
@@ -730,6 +801,7 @@ const handleTeamRightClick = (e, teamId) => {
         csvCell(ann.descriptor || ''),
         csvCell(players.join('; ')),
         csvCell(ann.note || ''),
+        csvCell(ann.scoreboard || ''),
       ].join(',');
     });
 
@@ -745,6 +817,302 @@ const handleTeamRightClick = (e, teamId) => {
   );
   const annotationTypes = [...new Set(annotations.map((a) => a.type))];
   const annotationTeams = [...new Set(annotations.map((a) => a.activeTeamName).filter(Boolean))];
+
+  const formatClock = (t) => (period.trim() ? `${t} ${period.trim()}` : t);
+
+  const addClockKey = (region, atTime) => {
+    const t = atTime !== undefined ? atTime : videoRef.current ? videoRef.current.currentTime : 0;
+    const key = { t: clockStatic ? 0 : t, x: region.x, y: region.y, w: region.w, h: region.h };
+    setClockKeys((prev) =>
+      clockStatic ? [key] : [...prev.filter((k) => Math.abs(k.t - t) > 0.5), key].sort((a, b) => a.t - b.t)
+    );
+    try {
+      localStorage.setItem('tc_clock_region_v1', JSON.stringify(region));
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  // the clock area as a few differently processed pictures, in case the first one can't be read
+  const captureClock = () => {
+    const video = videoRef.current;
+    const region = video ? regionAt(clockKeys, video.currentTime) : null;
+    if (!region) return null;
+    return ['auto', true, false].map((invert) => cropToCanvas(video, region, { minHeight: 120, invert }));
+  };
+
+  const captureFrame = (invert = 'auto') =>
+    videoRef.current
+      ? cropToCanvas(videoRef.current, { x: 0, y: 0, w: 1, h: 1 }, { minHeight: 0, maxWidth: 1600, invert })
+      : null;
+
+  const readClockText = async (canvases) => {
+    for (const canvas of [].concat(canvases)) {
+      if (!canvas) continue;
+      const text = parseClock(await recognizeText(canvas, { whitelist: '0123456789:.', psm: '7' }));
+      if (text) return text;
+    }
+    return '';
+  };
+
+  // looks for the clock anywhere in the frame
+  const findClock = async () => {
+    if (!videoRef.current) return;
+    setClockBusy(true);
+    try {
+      for (const invert of [true, false]) {
+        const canvas = captureFrame(invert);
+        const hit = canvas ? await findClockInCanvas(canvas) : null;
+        if (hit) {
+          addClockKey(hit.region);
+          setGameClockTime(formatClock(hit.text));
+          return;
+        }
+      }
+      setToast({ message: 'No clock found in this frame. Try a frame where the scoreboard is clearly visible, or draw the region by hand.' });
+    } catch (err) {
+      setToast({ message: `OCR failed: ${err.message}` });
+    } finally {
+      setClockBusy(false);
+    }
+  };
+
+  const readGameClock = async () => {
+    if (clockKeys.length === 0) {
+      await findClock();
+      return;
+    }
+    const canvas = captureClock();
+    if (!canvas) return;
+    setClockBusy(true);
+    try {
+      const t = await readClockText(canvas);
+      if (t) setGameClockTime(formatClock(t));
+      else setToast({ message: 'Could not read the clock here. Try "Find clock", or set the region again at this point in the video.' });
+    } catch (err) {
+      setToast({ message: `OCR failed: ${err.message}` });
+    } finally {
+      setClockBusy(false);
+    }
+  };
+
+  const getScoreReader = () => {
+    if (!scoreReaderRef.current) scoreReaderRef.current = createScoreReader({ text: recognizeText });
+    return scoreReaderRef.current;
+  };
+
+  const captureBox = (region) =>
+    region && videoRef.current ? cropToCanvas(videoRef.current, region, { minHeight: 0, raw: true }) : null;
+
+  // the number in each score box, or null where the box is missing or unclear
+  const readScoreBoxes = async (canvases) => {
+    const reader = getScoreReader();
+    const values = [];
+    for (const canvas of canvases) {
+      const read = canvas ? await reader(canvas) : null;
+      values.push(read ? read.value : null);
+    }
+    return values;
+  };
+
+  const scoreLine = (values) =>
+    values
+      .map((v, i) => (v === null ? null : `${teams[i] ? teams[i].name : 'Team ' + (i + 1)} ${v}`))
+      .filter(Boolean)
+      .join(' - ');
+
+  // runs the readings through the guard. gives the accepted scores, or null if a box has none yet
+  const settleScores = (values, canvases) => {
+    const guard = guardRef.current;
+    const accepted = values.map((v, i) => {
+      if (!canvases[i]) return null;
+      if (v === null) return guard.scores[i] ? guard.scores[i].value : null;
+      return guard.acceptScore(i, v);
+    });
+    const ready = canvases.every((c, i) => !c || accepted[i] !== null);
+    return ready && accepted.some((v) => v !== null) ? accepted : null;
+  };
+
+  // looks at the tagged scoreboard in a few moments of the video and works out where the names, scores and clock are
+  const autoDetectScoreboard = async () => {
+    const video = videoRef.current;
+    if (!video || !scoreArea) {
+      setSelectingRegion('scoreArea');
+      return;
+    }
+    setDetectBusy(true);
+    const hidden = document.createElement('video');
+    try {
+      hidden.muted = true;
+      hidden.preload = 'auto';
+      hidden.src = videoSrc;
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('The video took too long to open')), 20000);
+        hidden.onloadeddata = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        hidden.onerror = () => {
+          clearTimeout(timer);
+          reject(new Error('Could not open the video'));
+        };
+      });
+
+      // pictures from different moments, the last one is the current moment
+      const start = video.currentTime;
+      const limit = (video.duration || start + 60) - 0.5;
+      const offsets = [36, 26, 18, 12, 8, 4, 0];
+      const ahead = offsets.map((o) => start + o).filter((t) => t <= limit);
+      const times = ahead.length >= 4 ? ahead : offsets.map((o) => start - o).filter((t) => t >= 0);
+      const pictures = [];
+      for (const t of times) {
+        await seekVideo(hidden, t);
+        const picture = cropToCanvas(hidden, scoreArea, { minHeight: 0, raw: true });
+        if (picture) pictures.push(picture);
+      }
+      if (pictures.length < 3) throw new Error('Not enough of the video to look at');
+
+      const result = await detectScoreboard(pictures, { text: recognizeText }, createCellReader);
+      if (!result.found) {
+        setToast({ message: "Couldn't work out the scoreboard. Draw the score boxes yourself with Set score A and Set score B." });
+        return;
+      }
+
+      const place = (box) => ({
+        x: scoreArea.x + ((box.x0 - 1) / result.w) * scoreArea.w,
+        y: scoreArea.y + ((box.y0 - 1) / result.h) * scoreArea.h,
+        w: ((box.x1 - box.x0 + 3) / result.w) * scoreArea.w,
+        h: ((box.y1 - box.y0 + 3) / result.h) * scoreArea.h,
+      });
+      const [first, second] = result.teams;
+      if (first || second) {
+        setScoreBoxes({ a: first ? place(first.scoreBox) : null, b: second ? place(second.scoreBox) : null });
+        setTeams((prev) => prev.map((t, i) => (result.teams[i] ? { ...t, name: result.teams[i].name } : t)));
+      }
+      if (result.clockBox) addClockKey(place(result.clockBox));
+
+      guardRef.current.reset();
+      if (result.teams.length) {
+        const values = [first ? first.score : null, second ? second.score : null];
+        setScoreValues(values);
+        setScoreText(result.teams.map((t) => `${t.name} ${t.score}`).join(' - '));
+      }
+
+      const parts = [];
+      if (result.teams.length) parts.push(result.teams.map((t) => t.name).join(' and '));
+      if (result.clockBox) parts.push('the clock');
+      const missing =
+        result.teams.length < 2 ? ' Only found ' + result.teams.length + ' team, draw the other score box with Set score A or B.' : '';
+      setToast({ message: `Found ${parts.join(' and ')}. Check the dashed boxes on the video.${missing}` });
+    } catch (err) {
+      setToast({ message: `Auto-detect failed: ${err.message}. You can draw the boxes yourself.` });
+    } finally {
+      hidden.removeAttribute('src');
+      hidden.load();
+      setDetectBusy(false);
+    }
+  };
+
+  const readScoreboard = async () => {
+    const canvases = [captureBox(scoreBoxes.a), captureBox(scoreBoxes.b)];
+    if (!canvases[0] && !canvases[1]) {
+      setSelectingRegion('scoreA');
+      return;
+    }
+    setScoreBusy(true);
+    try {
+      const values = await readScoreBoxes(canvases);
+      guardRef.current.resetScores();
+      const accepted = settleScores(values, canvases);
+      if (accepted) {
+        setScoreValues(accepted);
+        setScoreText(scoreLine(accepted));
+      } else {
+        setToast({ message: 'Could not read the scores. Draw a tighter box around each number.' });
+      }
+    } catch (err) {
+      setToast({ message: `OCR failed: ${err.message}` });
+    } finally {
+      setScoreBusy(false);
+    }
+  };
+
+  // auto mode reads the clock and scores for each new tag, and searches the whole frame if the clock region misses
+  const autoReadClock = (annotationId) => {
+    if (!autoClock || !videoRef.current) return;
+    const video = videoRef.current;
+    const crop = captureClock();
+    const frame = captureFrame();
+    const boxes = [captureBox(scoreBoxes.a), captureBox(scoreBoxes.b)];
+    const at = video.currentTime;
+    const speed = video.playbackRate;
+    const patch = (changes) =>
+      setAnnotations((prev) => prev.map((a) => (a.id === annotationId ? { ...a, ...changes } : a)));
+    (async () => {
+      let t = crop ? await readClockText(crop) : '';
+      if (!t && frame) {
+        const hit = await findClockInCanvas(frame);
+        if (hit) {
+          t = hit.text;
+          addClockKey(hit.region, at);
+        }
+      }
+      if (t) patch({ gameClockTime: formatClock(guardRef.current.acceptClock(t, at, speed) || t) });
+      if (boxes[0] || boxes[1]) {
+        const accepted = settleScores(await readScoreBoxes(boxes), boxes);
+        if (accepted) patch({ scoreboard: scoreLine(accepted), scores: accepted });
+      }
+    })().catch(() => {});
+  };
+
+  // fills the clock and score boxes from the video, only keeping readings that make sense
+  liveReadRef.current = async (force) => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (liveBusyRef.current) {
+      // a seek while a read is running: read again as soon as it finishes
+      if (force) rerunRef.current = true;
+      return;
+    }
+    const clock = captureClock();
+    const boxes = [captureBox(scoreBoxes.a), captureBox(scoreBoxes.b)];
+    if (!clock && !boxes[0] && !boxes[1]) return;
+    const at = video.currentTime;
+    const speed = video.playbackRate;
+    const epoch = seekEpochRef.current;
+    liveBusyRef.current = true;
+    try {
+      const guard = guardRef.current;
+      if (guard.seen(at)) {
+        setGameClockTime('');
+        setScoreText('');
+        setScoreValues(null);
+      }
+      if (clock) {
+        const text = await readClockText(clock);
+        if (epoch !== seekEpochRef.current) return;
+        const accepted = text ? guard.acceptClock(text, at, speed) : null;
+        if (accepted) setGameClockTime(formatClock(accepted));
+      }
+      if (boxes[0] || boxes[1]) {
+        const values = await readScoreBoxes(boxes);
+        if (epoch !== seekEpochRef.current) return;
+        const accepted = settleScores(values, boxes);
+        if (accepted) {
+          setScoreValues(accepted);
+          setScoreText(scoreLine(accepted));
+        }
+      }
+    } catch (err) {
+      // ignore
+    } finally {
+      liveBusyRef.current = false;
+      if (rerunRef.current || epoch !== seekEpochRef.current) {
+        rerunRef.current = false;
+        setTimeout(() => liveReadRef.current && liveReadRef.current(), 0);
+      }
+    }
+  };
 
   const analyzeCurrentFrame = async () => {
     if (!videoRef.current) return;
@@ -870,7 +1238,93 @@ const handleTeamRightClick = (e, teamId) => {
                     className={`w-full rounded-lg cursor-pointer ${processedOverlay ? 'opacity-0' : 'opacity-100'}`}
                     style={{ maxHeight: '60vh' }}
                     onEnded={handleVideoEnded}
+                    onSeeked={() => {
+                      seekEpochRef.current += 1;
+                      const hasAreas = clockKeys.length > 0 || scoreBoxes.a || scoreBoxes.b;
+                      // a big jump in the video makes the old clock and score wrong, so clear them right away
+                      if (liveRead && hasAreas && videoRef.current && guardRef.current.seen(videoRef.current.currentTime)) {
+                        setGameClockTime('');
+                        setScoreText('');
+                        setScoreValues(null);
+                      }
+                      if (liveRead && liveReadRef.current) liveReadRef.current(true);
+                    }}
                   />
+
+                  {selectingRegion && (
+                    <RegionSelector
+                      videoRef={videoRef}
+                      label={
+                        selectingRegion === 'scoreA'
+                          ? 'Drag a box around the first score (just the number)'
+                          : selectingRegion === 'scoreB'
+                          ? 'Drag a box around the second score (just the number)'
+                          : selectingRegion === 'scoreArea'
+                          ? 'Drag a box around the whole scoreboard'
+                          : undefined
+                      }
+                      onDone={(region) => {
+                        if (selectingRegion === 'scoreA') setScoreBoxes((prev) => ({ ...prev, a: region }));
+                        else if (selectingRegion === 'scoreB') setScoreBoxes((prev) => ({ ...prev, b: region }));
+                        else if (selectingRegion === 'scoreArea') setScoreArea(region);
+                        else addClockKey(region);
+                        setSelectingRegion(false);
+                      }}
+                      onCancel={() => setSelectingRegion(false)}
+                    />
+                  )}
+
+                  {clockRegion && !selectingRegion && !isPlaying && !processedOverlay && videoRef.current && (() => {
+                    const c = contentRect(videoRef.current);
+                    return (
+                      <div
+                        className="absolute border border-dashed border-yellow-400/70 pointer-events-none z-10"
+                        title="Game clock region"
+                        style={{
+                          left: c.left + clockRegion.x * c.width,
+                          top: c.top + clockRegion.y * c.height,
+                          width: clockRegion.w * c.width,
+                          height: clockRegion.h * c.height,
+                        }}
+                      />
+                    );
+                  })()}
+
+                  {scoreArea && !selectingRegion && !isPlaying && !processedOverlay && videoRef.current && (() => {
+                    const c = contentRect(videoRef.current);
+                    return (
+                      <div
+                        className="absolute border border-dashed border-purple-400/70 pointer-events-none z-10"
+                        title="Scoreboard area"
+                        style={{
+                          left: c.left + scoreArea.x * c.width,
+                          top: c.top + scoreArea.y * c.height,
+                          width: scoreArea.w * c.width,
+                          height: scoreArea.h * c.height,
+                        }}
+                      />
+                    );
+                  })()}
+
+                  {!selectingRegion && !isPlaying && !processedOverlay && videoRef.current &&
+                    ['a', 'b'].map((key) => {
+                      const box = scoreBoxes[key];
+                      if (!box) return null;
+                      const c = contentRect(videoRef.current);
+                      return (
+                        <div
+                          key={key}
+                          className="absolute border border-dashed border-sky-400/80 pointer-events-none z-10"
+                          title={`Score box ${key.toUpperCase()}`}
+                          style={{
+                            left: c.left + box.x * c.width,
+                            top: c.top + box.y * c.height,
+                            width: box.w * c.width,
+                            height: box.h * c.height,
+                          }}
+                        />
+                      );
+                    })}
 
                   {processedOverlay && (
                     <div className="absolute inset-0 z-10">
@@ -1198,13 +1652,166 @@ const handleTeamRightClick = (e, teamId) => {
               {/* GAME CLOCK */}
               <div className="mb-4 p-3 bg-gray-700 rounded">
                 <h3 className="text-sm font-bold mb-2">Game Clock</h3>
-                <input
-                  type="text"
-                  value={gameClockTime}
-                  onChange={(e) => setGameClockTime(e.target.value)}
-                  placeholder="e.g. 10:45 Q2"
-                  className="w-full bg-gray-800 text-white text-sm px-2 py-1 rounded border border-gray-600 focus:border-blue-500"
-                />
+                <div className="flex gap-2 mb-2">
+                  <input
+                    type="text"
+                    value={gameClockTime}
+                    onChange={(e) => setGameClockTime(e.target.value)}
+                    placeholder="e.g. 10:45 Q2"
+                    className="flex-1 min-w-0 bg-gray-800 text-white text-sm px-2 py-1 rounded border border-gray-600 focus:border-blue-500"
+                  />
+                  <input
+                    type="text"
+                    value={period}
+                    onChange={(e) => setPeriod(e.target.value)}
+                    placeholder="Q2"
+                    title="Period added to clocks read by OCR"
+                    className="w-14 bg-gray-800 text-white text-sm px-2 py-1 rounded border border-gray-600 focus:border-blue-500"
+                  />
+                </div>
+                <div className="flex flex-wrap items-center gap-1 text-xs">
+                  <button
+                    onClick={readGameClock}
+                    disabled={clockBusy || !videoSrc}
+                    className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
+                  >
+                    {clockBusy ? 'Reading...' : 'Read from video'}
+                  </button>
+                  <button
+                    onClick={findClock}
+                    disabled={clockBusy || !videoSrc}
+                    className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
+                    title="Search the whole frame for the clock and remember where it is at this moment"
+                  >
+                    Find clock
+                  </button>
+                  <button
+                    onClick={() => setSelectingRegion('clock')}
+                    disabled={!videoSrc}
+                    className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
+                    title="Draw a box around the game clock"
+                  >
+                    Set clock area
+                  </button>
+                  <button
+                    onClick={() => setClockKeys([])}
+                    disabled={clockKeys.length === 0}
+                    className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
+                  >
+                    Clear clock area
+                  </button>
+                  <button
+                    onClick={() => setGameClockTime('')}
+                    disabled={!gameClockTime}
+                    className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
+                  >
+                    Clear text
+                  </button>
+                  <label className="flex items-center gap-1 text-gray-300" title="Turn on if the clock moves around the screen, then set the area at a few points">
+                    <input type="checkbox" checked={!clockStatic} onChange={(e) => setClockStatic(!e.target.checked)} />
+                    Camera moves
+                  </label>
+                  <label className="flex items-center gap-1 text-gray-300" title="Keep the clock and scoreboard boxes up to date while the video plays">
+                    <input type="checkbox" checked={liveRead} onChange={(e) => setLiveRead(e.target.checked)} />
+                    Live read
+                  </label>
+                  <label className="flex items-center gap-1 ml-auto text-gray-300" title="Read the clock and scoreboard for every new tag">
+                    <input type="checkbox" checked={autoClock} onChange={(e) => setAutoClock(e.target.checked)} />
+                    Auto on tag
+                  </label>
+                </div>
+                <p className="text-[11px] text-gray-400 mt-2">
+                  {clockKeys.length === 0
+                    ? 'No clock area yet. "Find clock" finds it, or draw it with "Set clock area".'
+                    : clockStatic
+                    ? 'The clock area is fixed for the whole video.'
+                    : `${clockKeys.length} point${clockKeys.length === 1 ? '' : 's'}. Set the area again at a few places and it moves between them.`}
+                </p>
+
+                <div className="mt-3 pt-3 border-t border-gray-600">
+                  <h3 className="text-sm font-bold mb-2">Scoreboard</h3>
+                  <input
+                    type="text"
+                    value={scoreText}
+                    onChange={(e) => {
+                      setScoreText(e.target.value);
+                      setScoreValues(null);
+                    }}
+                    placeholder="e.g. LAL 88 - BOS 84"
+                    className="w-full bg-gray-800 text-white text-sm px-2 py-1 rounded border border-gray-600 focus:border-blue-500"
+                  />
+                  <div className="flex flex-wrap items-center gap-1 text-xs mt-2">
+                    <span className="text-gray-400 w-full">Automatic</span>
+                    <button
+                      onClick={() => setSelectingRegion('scoreArea')}
+                      disabled={!videoSrc}
+                      className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
+                      title="Draw a box around the whole scoreboard"
+                    >
+                      {scoreArea ? 'Redraw scoreboard area' : 'Set scoreboard area'}
+                    </button>
+                    <button
+                      onClick={autoDetectScoreboard}
+                      disabled={detectBusy || !videoSrc || !scoreArea}
+                      className="bg-blue-700 hover:bg-blue-600 disabled:opacity-60 px-2 py-1 rounded font-semibold"
+                      title="Finds the team names, the score boxes and the clock inside the scoreboard area"
+                    >
+                      {detectBusy ? 'Looking...' : 'Auto-detect'}
+                    </button>
+                    <button
+                      onClick={() => setScoreArea(null)}
+                      disabled={!scoreArea}
+                      className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
+                    >
+                      Clear area
+                    </button>
+                    <span className="text-gray-400 w-full mt-1">Manual</span>
+                    <button
+                      onClick={() => setSelectingRegion('scoreA')}
+                      disabled={!videoSrc}
+                      className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
+                      title="Draw a box around the number of the first team's score"
+                    >
+                      {scoreBoxes.a ? 'Redraw score A' : 'Set score A'}
+                    </button>
+                    <button
+                      onClick={() => setSelectingRegion('scoreB')}
+                      disabled={!videoSrc}
+                      className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
+                      title="Draw a box around the number of the second team's score"
+                    >
+                      {scoreBoxes.b ? 'Redraw score B' : 'Set score B'}
+                    </button>
+                    <button
+                      onClick={() => setScoreBoxes({ a: null, b: null })}
+                      disabled={!scoreBoxes.a && !scoreBoxes.b}
+                      className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
+                    >
+                      Clear boxes
+                    </button>
+                    <span className="text-gray-400 w-full mt-1">Reading</span>
+                    <button
+                      onClick={readScoreboard}
+                      disabled={scoreBusy || !videoSrc}
+                      className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
+                    >
+                      {scoreBusy ? 'Reading...' : 'Read scoreboard'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setScoreText('');
+                        setScoreValues(null);
+                      }}
+                      disabled={!scoreText}
+                      className="bg-gray-800 hover:bg-gray-600 disabled:opacity-60 px-2 py-1 rounded"
+                    >
+                      Clear text
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-gray-400 mt-2">
+                    Automatic: draw a box around the whole scoreboard, then Auto-detect. It finds the team names, the score boxes and the clock. Manual: if that doesn't work, draw a tight box around each score number yourself, and the clock with Set clock area.
+                  </p>
+                </div>
               </div>
 
               {/* TAGGING PANELS */}

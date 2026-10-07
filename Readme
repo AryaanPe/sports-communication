@@ -45,6 +45,17 @@ Sports Non-Verbal Communication Video Annotator
 - A single video can be uploaded from the start screen without picking a folder
 - The game clock can be typed in the Game Clock box and is added to each new annotation
 
+# Game Clock and Scoreboard
+- The game clock and the score can be read from the video, so you don't have to type them
+- Automatic: click "Set scoreboard area" and draw a box around the whole scoreboard, then click "Auto-detect". It looks at a few moments of the video, finds the parts that stay in place, and works out the team names, the two scores and the clock. The team names go on the Team buttons
+- Manual: if Auto-detect can't work it out, draw a tight box around each score number with "Set score A" and "Set score B", and around the clock with "Set clock area". "Find clock" tries to find the clock by itself
+- "Read from video" and "Read scoreboard" read once. "Live read" keeps the clock and scores up to date while the video plays and after you seek. "Auto on tag" reads them for every new tag and saves them on the annotation
+- If the clock moves around the screen, tick "Camera moves" and set the clock area again at a few points in the video
+- Readings are checked before they are used. The clock can't run faster than the video or change direction, and a score can only go up by a small amount and has to be seen twice. This stops glitches like 0 turning into 108. When you jump to another part of the video the boxes are cleared until a new reading is found, and if the scoreboard is hidden for a moment the last good value stays
+- The small box next to the clock is a period (like Q2) that gets added to the clock
+- Reading uses tesseract.js, which downloads its data the first time, so it needs an internet connection. Results can be wrong, so check them
+- The exports get a Scoreboard column and a scores field
+
 # Definitions:
 
 - Eye Contact  
