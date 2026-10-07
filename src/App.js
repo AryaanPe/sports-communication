@@ -36,6 +36,8 @@ import {
   DescriptorModal,
   AnnotationEditModal,
   SummaryModal,
+  InputModal,
+  ConfirmModal,
   summaryToCSV,
 } from './components/Modals';
 
@@ -81,6 +83,7 @@ export default function VideoAnnotator() {
   const [descriptorPrompt, setDescriptorPrompt] = useState(null);
   const [editingAnnotation, setEditingAnnotation] = useState(null);
   const [showSummary, setShowSummary] = useState(false);
+  const [dialog, setDialog] = useState(null); // { kind, teamId }
   const [toast, setToast] = useState(null);
   const [filterType, setFilterType] = useState('all');
   const [filterTeam, setFilterTeam] = useState('all');
@@ -131,7 +134,7 @@ export default function VideoAnnotator() {
   };
 
   modalOpenRef.current = !!(
-    selectingRegion || activeShot || editingAction || showBulkAdd || descriptorPrompt || editingAnnotation || showSummary
+    selectingRegion || activeShot || editingAction || showBulkAdd || descriptorPrompt || editingAnnotation || showSummary || dialog
   );
 
   useEffect(() => {
@@ -299,20 +302,10 @@ export default function VideoAnnotator() {
     ];
   }
 
-const handleTeamRightClick = (e, teamId) => {
-  e.preventDefault();
-  const currentTeam = teams.find(t => t.id === teamId);
-  
-  const newName = prompt("Enter new team name:", currentTeam.name);
-  if (!newName) return;
-
-  const newColor = prompt("Enter color name or hex code (e.g. #2563eb):", currentTeam.color);
-  if (!newColor) return;
-
-  setTeams(teams.map(t => 
-    t.id === teamId ? { ...t, name: newName, color: newColor } : t
-  ));
-};
+  const handleTeamRightClick = (e, teamId) => {
+    e.preventDefault();
+    setDialog({ kind: 'team', teamId });
+  };
 
   function capitalizeWords(str) {
     return str
@@ -658,19 +651,9 @@ const handleTeamRightClick = (e, teamId) => {
     });
   };
 
-  const newPanel = () => {
-    const name = prompt('Name for the new panel:');
-    if (!name || !name.trim()) return;
-    const panel = makePanel(name.trim(), []);
-    setPanels((prev) => [...prev, panel]);
-    setActivePanelId(panel.id);
-  };
+  const newPanel = () => setDialog({ kind: 'newPanel' });
 
-  const renamePanel = () => {
-    const name = prompt('Rename panel to:', activePanel.name);
-    if (!name || !name.trim()) return;
-    setPanels((prev) => prev.map((p) => (p.id === activePanel.id ? { ...p, name: name.trim() } : p)));
-  };
+  const renamePanel = () => setDialog({ kind: 'renamePanel' });
 
   const duplicatePanel = () => {
     const copy = makePanel(`${activePanel.name} copy`, activePanel.actions);
@@ -683,15 +666,29 @@ const handleTeamRightClick = (e, teamId) => {
       setToast({ message: 'You need at least one panel' });
       return;
     }
-    if (!window.confirm(`Delete panel "${activePanel.name}" and its ${actions.length} buttons?`)) return;
-    const remaining = panels.filter((p) => p.id !== activePanel.id);
-    setPanels(remaining);
-    setActivePanelId(remaining[0].id);
+    setDialog({ kind: 'deletePanel' });
   };
 
-  const resetPanel = () => {
-    if (!window.confirm(`Replace all buttons in "${activePanel.name}" with the built-in defaults?`)) return;
-    setActions(defaultActionsCopy());
+  const resetPanel = () => setDialog({ kind: 'resetPanel' });
+
+  const runDialog = (values) => {
+    const kind = dialog.kind;
+    setDialog(null);
+    if (kind === 'newPanel') {
+      const panel = makePanel(values.name.trim(), []);
+      setPanels((prev) => [...prev, panel]);
+      setActivePanelId(panel.id);
+    } else if (kind === 'renamePanel') {
+      setPanels((prev) => prev.map((p) => (p.id === activePanel.id ? { ...p, name: values.name.trim() } : p)));
+    } else if (kind === 'team') {
+      setTeams((prev) => prev.map((t) => (t.id === dialog.teamId ? { ...t, name: values.name.trim(), color: values.color.trim() } : t)));
+    } else if (kind === 'deletePanel') {
+      const remaining = panels.filter((p) => p.id !== activePanel.id);
+      setPanels(remaining);
+      setActivePanelId(remaining[0].id);
+    } else if (kind === 'resetPanel') {
+      setActions(defaultActionsCopy());
+    }
   };
 
   const exportPanels = (all) => {
@@ -1882,6 +1879,57 @@ const handleTeamRightClick = (e, teamId) => {
           </div>
         )}
       </div>
+        {dialog && dialog.kind === 'newPanel' && (
+          <InputModal
+            title="New panel"
+            fields={[{ key: 'name', label: 'Panel name', value: '' }]}
+            confirmLabel="Create"
+            onSubmit={runDialog}
+            onClose={() => setDialog(null)}
+          />
+        )}
+
+        {dialog && dialog.kind === 'renamePanel' && (
+          <InputModal
+            title="Rename panel"
+            fields={[{ key: 'name', label: 'Panel name', value: activePanel.name }]}
+            onSubmit={runDialog}
+            onClose={() => setDialog(null)}
+          />
+        )}
+
+        {dialog && dialog.kind === 'team' && teams.find((t) => t.id === dialog.teamId) && (
+          <InputModal
+            title="Edit team"
+            fields={[
+              { key: 'name', label: 'Team name', value: teams.find((t) => t.id === dialog.teamId).name },
+              { key: 'color', label: 'Color (a name or a hex code like #2563eb)', value: teams.find((t) => t.id === dialog.teamId).color },
+            ]}
+            onSubmit={runDialog}
+            onClose={() => setDialog(null)}
+          />
+        )}
+
+        {dialog && dialog.kind === 'deletePanel' && (
+          <ConfirmModal
+            title="Delete panel"
+            message={`Delete "${activePanel.name}" and its ${actions.length} buttons?`}
+            confirmLabel="Delete"
+            onConfirm={() => runDialog({})}
+            onClose={() => setDialog(null)}
+          />
+        )}
+
+        {dialog && dialog.kind === 'resetPanel' && (
+          <ConfirmModal
+            title="Reset panel"
+            message={`Replace all buttons in "${activePanel.name}" with the built-in defaults?`}
+            confirmLabel="Reset"
+            onConfirm={() => runDialog({})}
+            onClose={() => setDialog(null)}
+          />
+        )}
+
         {editingAction && (
           <ActionEditModal
             key={editingAction.id}

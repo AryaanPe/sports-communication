@@ -63,7 +63,7 @@ export const normalizeAction = (a) => ({
   lag: Math.max(0, Number(a.lag) || 0),
   group: String(a.group || '').trim(),
   descriptors: Array.isArray(a.descriptors) ? a.descriptors.map(String).filter(Boolean) : [],
-  kind: a.kind || (SHOT_LABELS.includes(a.label) ? 'shot' : ''),
+  kind: a.kind || (SHOT_LABELS.includes(a.label) || SHOT_LABELS.includes(a.id) ? 'shot' : ''),
 });
 
 // ids starting with btn- are generated, so the label is used as the type
@@ -98,6 +98,16 @@ export function loadPanels() {
     }
   } catch (e) {
     // use the defaults
+  }
+  // the earlier version of the app saved its buttons under this key, keep them
+  try {
+    const old = JSON.parse(localStorage.getItem('actionButtons'));
+    if (Array.isArray(old) && old.some((a) => a && a.label)) {
+      const migrated = makePanel('Default', old.filter((a) => a && a.label));
+      return { panels: [migrated], activePanelId: migrated.id };
+    }
+  } catch (e) {
+    // ignore
   }
   const def = makePanel('Default', DEFAULT_ACTIONS);
   return { panels: [def], activePanelId: def.id };

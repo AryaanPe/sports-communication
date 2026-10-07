@@ -341,3 +341,51 @@ export function SummaryModal({ annotations, teamNames, onExport, onClose }) {
     </Modal>
   );
 }
+
+// a small form: fields is [{ key, label, value }]
+export function InputModal({ title, fields, confirmLabel = 'Save', onSubmit, onClose }) {
+  const [values, setValues] = useState(() => Object.fromEntries(fields.map((f) => [f.key, f.value || ''])));
+  const ready = fields.every((f) => String(values[f.key]).trim());
+  const submit = () => {
+    if (ready) onSubmit(values);
+  };
+
+  return (
+    <Modal title={title} onClose={onClose}>
+      <div className="space-y-3">
+        {fields.map((f, i) => (
+          <div key={f.key}>
+            <label className={labelCls}>{f.label}</label>
+            <input
+              className={inputCls}
+              value={values[f.key]}
+              autoFocus={i === 0}
+              onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
+              onKeyDown={(e) => e.key === 'Enter' && submit()}
+            />
+          </div>
+        ))}
+        <div className="flex gap-2">
+          <button onClick={onClose} className="ml-auto bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm">Cancel</button>
+          <button onClick={submit} disabled={!ready} className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 px-4 py-2 rounded text-sm font-bold">
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+export function ConfirmModal({ title, message, confirmLabel = 'OK', onConfirm, onClose }) {
+  return (
+    <Modal title={title} onClose={onClose}>
+      <p className="text-sm text-gray-300 mb-4">{message}</p>
+      <div className="flex gap-2">
+        <button onClick={onClose} className="ml-auto bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm">Cancel</button>
+        <button onClick={onConfirm} autoFocus className="bg-red-700 hover:bg-red-600 px-4 py-2 rounded text-sm font-bold">
+          {confirmLabel}
+        </button>
+      </div>
+    </Modal>
+  );
+}
