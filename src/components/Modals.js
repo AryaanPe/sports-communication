@@ -389,3 +389,45 @@ export function ConfirmModal({ title, message, confirmLabel = 'OK', onConfirm, o
     </Modal>
   );
 }
+
+// paste a Google Drive link or a direct link to a video. onSubmit gives back a problem to show, or nothing
+export function LinkModal({ onSubmit, onClose }) {
+  const [text, setText] = useState('');
+  const [error, setError] = useState('');
+  const submit = () => {
+    const problem = onSubmit(text);
+    if (problem) setError(problem);
+  };
+
+  return (
+    <Modal title="Link a video" onClose={onClose} width="w-[30rem]">
+      <div className="space-y-3">
+        <div>
+          <label className={labelCls}>Google Drive link, or a direct link to a video file</label>
+          <input
+            className={inputCls}
+            value={text}
+            autoFocus
+            placeholder="https://drive.google.com/file/d/..."
+            onChange={(e) => {
+              setText(e.target.value);
+              setError('');
+            }}
+            onKeyDown={(e) => e.key === 'Enter' && submit()}
+          />
+        </div>
+        {error && <p className="text-xs text-red-400">{error}</p>}
+        <p className="text-xs text-gray-400">
+          In Google Drive open the video, click Share, set General access to "Anyone with the link", and copy the link.
+          Very large files may not play, and a linked video may not allow reading the clock and score.
+        </p>
+        <div className="flex gap-2">
+          <button onClick={onClose} className="ml-auto bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm">Cancel</button>
+          <button onClick={submit} disabled={!text.trim()} className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 px-4 py-2 rounded text-sm font-bold">
+            Open
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}

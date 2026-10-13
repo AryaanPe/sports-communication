@@ -42,7 +42,10 @@ Sports Non-Verbal Communication Video Annotator
 - Filter the list by action or team, and use "Play clips" to watch the filtered annotations one after another
 - A timeline under the player shows one row per action. Click a marker to jump to it
 - Summary shows counts per action per team and can be exported as CSV
-- A single video can be uploaded from the start screen without picking a folder
+- You don't need a video to use the coding panel. Buttons, panels, hotkeys and bulk add can be set up first. Tagging needs a video, and says so if you try without one
+- Load a video by uploading a file, choosing a folder, or linking one
+- Link: click "Link a video" and paste a Google Drive link. In Drive, open the video, click Share, set General access to "Anyone with the link", and copy the link. A direct link to a video file also works. Folder links and YouTube links don't
+- Linked videos play and can be tagged, and their annotations are saved. Google Drive may not allow the page to read the picture, and then the clock and score can't be read from the video (you can type them). Very large files may not play from Drive. If a linked video can't be read, a note appears in the clock and scoreboard panel
 - The game clock can be typed in the Game Clock box and is added to each new annotation
 
 # Game Clock and Scoreboard

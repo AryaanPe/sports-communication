@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Play, Pause, Upload, Download, Trash2, Volume2, VolumeX, Pencil, BarChart3 } from 'lucide-react';
+import { Play, Pause, Upload, Download, Trash2, Volume2, VolumeX, Pencil, BarChart3, Link2 } from 'lucide-react';
 import {
   COLOR_PALETTE,
   colorProps,
@@ -29,6 +29,7 @@ import RegionSelector from './components/RegionSelector';
 import { createScoreReader, createCellReader } from './scoreboard';
 import { detectScoreboard } from './scoreboardLayout';
 import { ReadingGuard } from './readingGuard';
+import { parseVideoLink } from './videoLink';
 import { recognizeText, cropToCanvas, contentRect, parseClock, regionAt, findClockInCanvas, seekVideo } from './ocr';
 import {
   ActionEditModal,
@@ -38,6 +39,7 @@ import {
   SummaryModal,
   InputModal,
   ConfirmModal,
+  LinkModal,
   summaryToCSV,
 } from './components/Modals';
 
@@ -84,6 +86,9 @@ export default function VideoAnnotator() {
   const [editingAnnotation, setEditingAnnotation] = useState(null);
   const [showSummary, setShowSummary] = useState(false);
   const [dialog, setDialog] = useState(null); // { kind, teamId }
+  const [showLink, setShowLink] = useState(false);
+  const [videoCors, setVideoCors] = useState(false); // ask the server to allow reading the picture
+  const [readable, setReadable] = useState(true); // false when the picture can't be read (some linked videos)
   const [toast, setToast] = useState(null);
   const [filterType, setFilterType] = useState('all');
   const [filterTeam, setFilterTeam] = useState('all');
@@ -115,6 +120,7 @@ export default function VideoAnnotator() {
   const modalOpenRef = useRef(false);
   const lastIdRef = useRef(0);
   const liveBusyRef = useRef(false);
+  const linkRef = useRef(null); // addresses still to try for a linked video
   const autoDetectRef = useRef(null);
   const detectKeyRef = useRef('');
   const areaDrawnRef = useRef(false);
@@ -134,7 +140,7 @@ export default function VideoAnnotator() {
   };
 
   modalOpenRef.current = !!(
-    selectingRegion || activeShot || editingAction || showBulkAdd || descriptorPrompt || editingAnnotation || showSummary || dialog
+    selectingRegion || activeShot || editingAction || showBulkAdd || descriptorPrompt || editingAnnotation || showSummary || dialog || showLink
   );
 
   useEffect(() => {
@@ -230,7 +236,7 @@ export default function VideoAnnotator() {
 
   useEffect(() => {
     const handleKeyPress = (e) => {
-      if (!videoRef.current || e.target.matches('input, textarea, select') || modalOpenRef.current) return;
+      if (!videoRef.current || !videoRef.current.getAttribute('src') || e.target.matches('input, textarea, select') || modalOpenRef.current) return;
 
       if (e.code === 'Space') {
         e.preventDefault();
@@ -251,28 +257,96 @@ export default function VideoAnnotator() {
     return () => window.removeEventListener('keydown', handleKeyPress);
   }, [seekBy]);
 
+  const UNREADABLE =
+    "Reading the clock and score needs the video uploaded from your computer. This link doesn't allow it, so type them in, or download the video and use Upload.";
+
+  // opens a video and starts fresh for it
+  const openVideo = ({ src, key, baseName, index = null, cors = false, candidates = null }) => {
+    stopClips(false);
+    linkRef.current = candidates;
+    setVideoCors(cors);
+    setReadable(true);
+    setVideoSrc(src);
+    setVideoKey(key);
+    setAnnotations(loadAnnotations(key));
+    setClockKeys(loadClockKeys(key));
+    setScoreBoxes(loadScoreBoxes(key));
+    setScoreArea(loadScoreArea(key));
+    setScoreText('');
+    setScoreValues(null);
+    guardRef.current.reset();
+    setDuration(0);
+    setCurrentTime(0);
+    setIsPlaying(false);
+    setPlaybackSpeed(0.5);
+    setVolume(1);
+    setPrevVolume(1);
+    setExportName(baseName);
+    setCurrentFileIndex(index);
+  };
+
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
-      const url = URL.createObjectURL(file);
-      stopClips(false);
-      setVideoSrc(url);
-      setVideoKey(file.name);
-      setAnnotations(loadAnnotations(file.name));
-      setClockKeys(loadClockKeys(file.name));
-      setScoreBoxes(loadScoreBoxes(file.name));
-      setScoreArea(loadScoreArea(file.name));
-      setScoreText('');
-      setScoreValues(null);
-      guardRef.current.reset();
-      setCurrentTime(0);
-      setPlaybackSpeed(0.5);
-      setVolume(1);
-      setPrevVolume(1);
-      const baseName = file.name.replace(/\.[^/.]+$/, '');
-      setExportName(baseName);
-      setCurrentFileIndex(null);
+      openVideo({ src: URL.createObjectURL(file), key: file.name, baseName: file.name.replace(/\.[^/.]+$/, '') });
     }
+  };
+
+  // returns a problem to show, or nothing when the link was opened
+  const linkVideo = (text) => {
+    const parsed = parseVideoLink(text);
+    if (!parsed.ok) return parsed.error;
+    const first = parsed.candidates[0];
+    openVideo({
+      src: first.url,
+      key: parsed.key,
+      baseName: parsed.name,
+      cors: first.cors,
+      candidates: { list: parsed.candidates, index: 0 },
+    });
+    setShowLink(false);
+    return '';
+  };
+
+  // a link that won't play: try the next address, and say so when none work
+  const handleVideoError = () => {
+    if (!videoSrc) return;
+    const tries = linkRef.current;
+    if (tries && tries.index + 1 < tries.list.length) {
+      tries.index += 1;
+      const next = tries.list[tries.index];
+      setVideoCors(next.cors);
+      setVideoSrc(next.url);
+      return;
+    }
+    setToast({
+      message: tries
+        ? 'Could not play that link. In Google Drive set sharing to "Anyone with the link" and check that it is a video file. Very large files may not play.'
+        : "This video can't be played in the browser.",
+    });
+  };
+
+  // can the picture be read for the clock and score? (some linked videos don't allow it)
+  const checkReadable = () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth || video.readyState < 2) return true;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1;
+      canvas.height = 1;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(video, 0, 0, 1, 1);
+      ctx.getImageData(0, 0, 1, 1);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  // the picture can look readable before its first frame is really there, so look again a moment later
+  const handleVideoReady = () => {
+    setReadable(checkReadable());
+    [400, 1500].forEach((ms) => setTimeout(() => setReadable(checkReadable()), ms));
   };
 
   function extractTeamsFromFolderName(folderName) {
@@ -352,29 +426,16 @@ export default function VideoAnnotator() {
   };
 
   const loadVideoFromFile = (file, index) => {
-    const url = URL.createObjectURL(file);
-    const key = file.webkitRelativePath || file.name;
-    stopClips(false);
-    setVideoSrc(url);
-    setVideoKey(key);
-    setAnnotations(loadAnnotations(key));
-    setClockKeys(loadClockKeys(key));
-    setScoreBoxes(loadScoreBoxes(key));
-    setScoreArea(loadScoreArea(key));
-    setScoreText('');
-    setScoreValues(null);
-    guardRef.current.reset();
-    setCurrentTime(0);
-    setPlaybackSpeed(0.5);
-    setVolume(1);
-    setPrevVolume(1);
-    const baseName = file.name.replace(/\.[^/.]+$/, '');
-    setExportName(baseName);
-    setCurrentFileIndex(index);
+    openVideo({
+      src: URL.createObjectURL(file),
+      key: file.webkitRelativePath || file.name,
+      baseName: file.name.replace(/\.[^/.]+$/, ''),
+      index,
+    });
   };
 
   const handlePlayPause = () => {
-    if (!videoRef.current) return;
+    if (!videoRef.current || !videoSrc) return;
     if (isPlaying) videoRef.current.pause();
     else {
       videoRef.current.play();
@@ -454,6 +515,7 @@ export default function VideoAnnotator() {
   };
 
   const handleSeek = (e) => {
+    if (!videoSrc || !duration) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const pos = (e.clientX - rect.left) / rect.width;
     const newTime = pos * duration;
@@ -485,7 +547,10 @@ export default function VideoAnnotator() {
   };
 
   const handleActionClick = (action) => {
-    if (!videoRef.current) return;
+    if (!videoRef.current || !videoSrc) {
+      setToast({ message: 'Load a video to tag moments. You can still set up your buttons.' });
+      return;
+    }
     const timestamp = videoRef.current.currentTime;
 
     if (action.kind === 'shot') {
@@ -853,6 +918,11 @@ export default function VideoAnnotator() {
   // looks for the clock anywhere in the frame
   const findClock = async () => {
     if (!videoRef.current) return;
+    if (!checkReadable()) {
+      setReadable(false);
+      setToast({ message: UNREADABLE });
+      return;
+    }
     setClockBusy(true);
     try {
       for (const invert of [true, false]) {
@@ -873,6 +943,11 @@ export default function VideoAnnotator() {
   };
 
   const readGameClock = async () => {
+    if (!checkReadable()) {
+      setReadable(false);
+      setToast({ message: UNREADABLE });
+      return;
+    }
     if (clockKeys.length === 0) {
       await findClock();
       return;
@@ -935,11 +1010,17 @@ export default function VideoAnnotator() {
       if (!quiet) setSelectingRegion('scoreArea');
       return;
     }
+    if (!checkReadable()) {
+      setReadable(false);
+      if (!quiet) setToast({ message: UNREADABLE });
+      return;
+    }
     setDetectBusy(true);
     const hidden = document.createElement('video');
     try {
       hidden.muted = true;
       hidden.preload = 'auto';
+      if (videoCors) hidden.crossOrigin = 'anonymous';
       hidden.src = videoSrc;
       await new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error('The video took too long to open')), 20000);
@@ -1011,6 +1092,11 @@ export default function VideoAnnotator() {
   autoDetectRef.current = autoDetectScoreboard;
 
   const readScoreboard = async () => {
+    if (!checkReadable()) {
+      setReadable(false);
+      setToast({ message: UNREADABLE });
+      return;
+    }
     const canvases = [captureBox(scoreBoxes.a), captureBox(scoreBoxes.b)];
     if (!canvases[0] && !canvases[1]) {
       setSelectingRegion('scoreA');
@@ -1036,7 +1122,7 @@ export default function VideoAnnotator() {
 
   // auto mode reads the clock and scores for each new tag, and searches the whole frame if the clock region misses
   const autoReadClock = (annotationId) => {
-    if (!autoClock || !videoRef.current) return;
+    if (!autoClock || !videoRef.current || !readable) return;
     const video = videoRef.current;
     const crop = captureClock();
     const frame = captureFrame();
@@ -1065,7 +1151,7 @@ export default function VideoAnnotator() {
   // fills the clock and score boxes from the video, only keeping readings that make sense
   liveReadRef.current = async (force) => {
     const video = videoRef.current;
-    if (!video || video.seeking) return;
+    if (!video || video.seeking || !readable) return;
     if (liveBusyRef.current) {
       // a seek while a read is running: read again as soon as it finishes
       if (force) rerunRef.current = true;
@@ -1152,41 +1238,23 @@ export default function VideoAnnotator() {
           Sports Non Verbal Communication
         </h1>
 
-        {folderFiles.length === 0 && !videoSrc && (
-          <div className="bg-gray-800 rounded-lg p-12 mb-8 border-2 border-dashed border-gray-600 hover:border-blue-500 transition">
-            <button
-              onClick={() => folderInputRef.current && folderInputRef.current.click()}
-              className="w-full flex flex-col items-center gap-4 text-gray-400 hover:text-blue-400"
-            >
-              <Upload size={64} />
-              <span className="text-xl">Click to select folder</span>
-              <span className="text-sm">All files inside the folder will be displayed</span>
-            </button>
-            <div className="mt-6 text-center text-gray-400 text-sm">
-              or{' '}
-              <button
-                onClick={() => fileInputRef.current && fileInputRef.current.click()}
-                className="text-blue-400 hover:text-blue-300 underline"
-              >
-                upload a single video
-              </button>
-            </div>
-          </div>
-        )}
-
-        {(folderFiles.length > 0 || videoSrc) && (
-          <div className="flex gap-4">
+        <div className="flex gap-4">
             {/* LEFT SIDE */}
             <div className="flex-[7] flex flex-col gap-3">
               <div className="bg-gray-800 rounded-lg p-3">
                 <div className="relative w-full overflow-hidden rounded-lg bg-black group">
                   <video
+                    key={`${videoSrc}|${videoCors}`}
                     ref={videoRef}
                     src={videoSrc}
+                    crossOrigin={videoCors ? 'anonymous' : undefined}
+                    onError={handleVideoError}
+                    onLoadedData={handleVideoReady}
+                    onCanPlay={handleVideoReady}
                     onTimeUpdate={handleTimeUpdate}
                     onLoadedMetadata={handleLoadedMetadata}
                     onClick={handleVideoClick}
-                    className="w-full rounded-lg cursor-pointer"
+                    className={`w-full rounded-lg cursor-pointer ${videoSrc ? '' : 'hidden'}`}
                     style={{ maxHeight: '60vh' }}
                     onEnded={handleVideoEnded}
                     onSeeking={() => {
@@ -1202,6 +1270,7 @@ export default function VideoAnnotator() {
                     }}
                     onSeeked={() => {
                       seekEpochRef.current += 1;
+                      handleVideoReady();
                       if (liveRead && liveReadRef.current) liveReadRef.current(true);
                     }}
                   />
@@ -1285,12 +1354,31 @@ export default function VideoAnnotator() {
                     })}
 
                   {!videoSrc && (
-                    <div className="text-gray-400 text-lg text-center">
-                      No file selected.
-                      <br />
-                      <span className="text-lg text-gray-400">
-                        Please choose a file from the folder window or upload a file.
-                      </span>
+                    <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 min-h-[260px] text-center">
+                      <p className="text-lg text-gray-300">Pick a video to start tagging</p>
+                      <div className="flex flex-wrap justify-center gap-2 text-sm">
+                        <button
+                          onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                          className="bg-blue-600 hover:bg-blue-500 px-3 py-2 rounded flex items-center gap-2"
+                        >
+                          <Upload size={16} />
+                          Upload a video
+                        </button>
+                        <button
+                          onClick={() => setShowLink(true)}
+                          className="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded flex items-center gap-2"
+                        >
+                          <Link2 size={16} />
+                          Link a video
+                        </button>
+                        <button
+                          onClick={() => folderInputRef.current && folderInputRef.current.click()}
+                          className="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded"
+                        >
+                          Choose a folder
+                        </button>
+                      </div>
+                      <p className="text-xs text-gray-500">You can set up your buttons and panels without a video.</p>
                     </div>
                   )}
                 </div>
@@ -1303,14 +1391,15 @@ export default function VideoAnnotator() {
                   >
                     <div
                       className="absolute h-full bg-red-600 rounded-full transition-all"
-                      style={{ width: `${(currentTime / duration) * 100}%` }}
+                      style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }}
                     />
                   </div>
 
                   <div className="flex items-center gap-3">
                     <button
                       onClick={handlePlayPause}
-                      className="bg-blue-600 hover:bg-blue-700 p-2 rounded-full"
+                      disabled={!videoSrc}
+                      className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 p-2 rounded-full"
                     >
                       {isPlaying ? <Pause size={20} /> : <Play size={20} />}
                     </button>
@@ -1356,8 +1445,16 @@ export default function VideoAnnotator() {
                     </div>
 
                     <button
-                      onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                      onClick={() => setShowLink(true)}
                       className="ml-auto bg-gray-700 hover:bg-gray-600 px-3 py-1 text-sm rounded flex items-center gap-2"
+                      title="Use a Google Drive link instead of uploading"
+                    >
+                      <Link2 size={16} />
+                      Link
+                    </button>
+                    <button
+                      onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                      className="bg-gray-700 hover:bg-gray-600 px-3 py-1 text-sm rounded flex items-center gap-2"
                     >
                       <Upload size={16} />
                       Upload
@@ -1611,6 +1708,12 @@ export default function VideoAnnotator() {
                     On tag
                   </label>
                 </div>
+
+                {videoSrc && !readable && (
+                  <p className="text-[11px] text-yellow-400 mt-2">
+                    The clock and score can't be read from this linked video. Type them in, or upload the file.
+                  </p>
+                )}
 
                 <details className="mt-2 text-xs">
                   <summary className="cursor-pointer text-gray-400 hover:text-white">Manual options</summary>
@@ -1877,8 +1980,9 @@ export default function VideoAnnotator() {
               </div>
             </div>
           </div>
-        )}
       </div>
+        {showLink && <LinkModal onSubmit={linkVideo} onClose={() => setShowLink(false)} />}
+
         {dialog && dialog.kind === 'newPanel' && (
           <InputModal
             title="New panel"
