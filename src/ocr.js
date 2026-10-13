@@ -83,7 +83,7 @@ export async function findClockInCanvas(canvas) {
   const words = await recognizeWords(canvas, { whitelist: '0123456789:.', psm: '11' });
   const hits = words
     .map((w) => ({ w, text: parseClock(w.text) }))
-    .filter((h) => h.text && /\d{1,2}:\d{2}/.test(h.w.text))
+    .filter((h) => h.text && /\d{1,2}[:;.,']\d/.test(h.w.text))
     .sort((a, b) => b.w.confidence - a.w.confidence);
   if (hits.length === 0) return null;
   const { w, text } = hits[0];
@@ -149,12 +149,19 @@ export function cropToCanvas(video, region, { minHeight = 120, maxWidth = 0, inv
   return canvas;
 }
 
-// "10:45" stays, "9.3" becomes "0:09.3"
+// "10:45" and "09:45" become "10:45" and "9:45", "9:45.3" keeps its tenths, "9.3" becomes "0:09.3".
+// Separators that get misread (; , ') count as a colon
 export function parseClock(text) {
-  const t = String(text || '').replace(/\s+/g, '');
-  const mmss = t.match(/(\d{1,2}):(\d{2})/);
-  if (mmss) return `${parseInt(mmss[1], 10)}:${mmss[2]}`;
-  const tenths = t.match(/(\d{1,2})\.(\d)/);
-  if (tenths) return `0:${tenths[1].padStart(2, '0')}.${tenths[2]}`;
+  const words = String(text || '').trim().split(/\s+/);
+  // "Q2 9:53": read each piece on its own so the quarter doesn't stick to the minutes
+  for (const word of words) {
+    const t = word.replace(/(?<=\d)[;,'](?=\d{2})/g, ':');
+    const mmss = t.match(/(\d{1,2}):([0-5]\d)(?:\.(\d))?/);
+    if (mmss) return `${parseInt(mmss[1], 10)}:${mmss[2]}${mmss[3] ? '.' + mmss[3] : ''}`;
+  }
+  for (const word of words) {
+    const tenths = word.match(/(?<!\d)(\d{1,2})\.(\d)(?!\d)/);
+    if (tenths && parseInt(tenths[1], 10) < 60) return `0:${tenths[1].padStart(2, '0')}.${tenths[2]}`;
+  }
   return '';
 }

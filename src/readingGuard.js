@@ -2,9 +2,9 @@
 // A reading is only accepted when it makes sense given the last accepted one.
 
 const toSeconds = (text) => {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(text || '');
+  const m = /^(\d{1,2}):(\d{2})(?:\.(\d))?$/.exec(text || '');
   if (!m || Number(m[2]) > 59) return null;
-  return Number(m[1]) * 60 + Number(m[2]);
+  return Number(m[1]) * 60 + Number(m[2]) + (m[3] ? Number(m[3]) / 10 : 0);
 };
 
 export const MAX_SCORE = 199;

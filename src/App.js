@@ -1220,7 +1220,7 @@ export default function VideoAnnotator() {
       if (result.teams.length) parts.push(result.teams.map((t) => t.name).join(' and '));
       if (result.clockBox) parts.push('the clock');
       const missing =
-        result.teams.length < 2 ? ' Only found ' + result.teams.length + ' team, draw the other score box in Manual options.' : '';
+        result.teams.length === 1 ? ' Only found ' + result.teams.length + ' team, draw the other score box in Manual options.' : '';
       if (!quiet) setToast({ message: `Found ${parts.join(' and ')}.${missing}` });
     } catch (err) {
       if (!quiet) setToast({ message: `Auto-detect failed: ${err.message}. You can draw the boxes yourself.` });

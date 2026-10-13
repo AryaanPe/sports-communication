@@ -3,6 +3,8 @@
 // between pictures belong to the scoreboard. Its rows and cells are then found from where the
 // text is, and each cell is read on its own.
 
+import { parseClock, findClockInCanvas } from './ocr';
+
 const gray = (canvas) => {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -120,13 +122,20 @@ export function findCells(canvases, options = {}) {
   let mask = new Uint8Array(w * h);
   for (let i = 0; i < mask.length; i += 1) mask[i] = spread[i] < still ? 1 : 0;
   mask = erode(dilate(mask, w, h, 2), w, h, 2);
-  const board = biggestGroup(mask, w, h);
-  if (!board || board.pixels.length < w * h * 0.08) return { found: false, w, h, median };
+  let board = biggestGroup(mask, w, h);
 
+  // no solid background: the text floats over the video, so only the pixels that stay put can be text
+  let floating = false;
   const inside = new Uint8Array(w * h);
-  board.pixels.forEach((i) => {
-    inside[i] = 1;
-  });
+  if (!board || board.pixels.length < w * h * 0.08) {
+    floating = true;
+    board = { x0: 0, y0: 0, x1: w - 1, y1: h - 1 };
+    for (let i = 0; i < inside.length; i += 1) inside[i] = spread[i] < still * 1.5 ? 1 : 0;
+  } else {
+    board.pixels.forEach((i) => {
+      inside[i] = 1;
+    });
+  }
 
   // text has corners: strong edges in both directions close together. Straight borders and stripes do not
   const across = new Uint8Array(w * h);
@@ -142,7 +151,12 @@ export function findCells(canvases, options = {}) {
   const nearAcross = dilate(across, w, h, 2);
   const nearDown = dilate(down, w, h, 2);
   const ink = new Uint8Array(w * h);
-  for (let i = 0; i < ink.length; i += 1) ink[i] = inside[i] && nearAcross[i] && nearDown[i] && (across[i] || down[i]) ? 1 : 0;
+  let inkCount = 0;
+  for (let i = 0; i < ink.length; i += 1) {
+    ink[i] = inside[i] && nearAcross[i] && nearDown[i] && (across[i] || down[i]) ? 1 : 0;
+    inkCount += ink[i];
+  }
+  if (floating && inkCount < 30) return { found: false, w, h, median };
 
   const rowFlags = [];
   for (let y = board.y0; y <= board.y1; y += 1) {
@@ -167,7 +181,7 @@ export function findCells(canvases, options = {}) {
     return { ...band, cells };
   });
 
-  return { found: true, w, h, median, board: { x0: board.x0, y0: board.y0, x1: board.x1, y1: board.y1 }, rows };
+  return { found: true, floating, w, h, median, board: { x0: board.x0, y0: board.y0, x1: board.x1, y1: board.y1 }, rows };
 }
 
 // the median picture as a canvas, so a cell can be handed to the readers
@@ -226,10 +240,28 @@ async function clockText(ocr, crop) {
     fctx.fillRect(0, 0, framed.width, framed.height);
     ctx.putImageData(copy, 0, 0);
     fctx.drawImage(big, 30, 30);
-    const text = (await ocr.text(framed, { whitelist: '0123456789:', psm: '7' })).replace(/\s+/g, '');
-    if (/^\d{1,2}:\d{2}$/.test(text)) return text;
+    const raw = (await ocr.text(framed, { whitelist: '0123456789:.', psm: '7' })).replace(/\s+/g, '');
+    const text = parseClock(raw);
+    if (text && raw.replace(/^0+(?=\d)/, '').length <= text.length + 1) return text;
   }
   return '';
+}
+
+// a clock that is just text on the video, in any of the usual formats, found by looking for clock-shaped text
+async function floatingClock(canvases) {
+  for (const picture of canvases.slice(-3).reverse()) {
+    const hit = await findClockInCanvas(picture);
+    if (hit) {
+      const { x, y, w, h } = hit.region;
+      return {
+        x0: Math.floor(x * picture.width),
+        y0: Math.floor(y * picture.height),
+        x1: Math.ceil((x + w) * picture.width) - 1,
+        y1: Math.ceil((y + h) * picture.height) - 1,
+      };
+    }
+  }
+  return null;
 }
 
 // canvases: pictures of the tagged scoreboard area taken at different times (the last ones are read for the clock)
@@ -237,7 +269,10 @@ async function clockText(ocr, crop) {
 // returns { found, w, h, teams: [{ name, score, nameBox, scoreBox }], clockBox } with boxes in picture coordinates
 export async function detectScoreboard(canvases, ocr, createCellReader, debug) {
   const layout = findCells(canvases);
-  if (!layout.found) return { found: false };
+  if (!layout.found) {
+    const clockBox = await floatingClock(canvases);
+    return clockBox ? { found: true, w: canvases[0].width, h: canvases[0].height, teams: [], clockBox } : { found: false };
+  }
   const readCell = createCellReader(ocr);
 
   // every row that has a name, with every cell to the right of it that could be a score
@@ -392,6 +427,8 @@ export async function detectScoreboard(canvases, ocr, createCellReader, debug) {
       if (clockBox) break;
     }
   }
+
+  if (!clockBox) clockBox = await floatingClock(canvases);
 
   return { found: teams.length > 0 || !!clockBox, w: layout.w, h: layout.h, teams, clockBox, board: layout.board };
 }
