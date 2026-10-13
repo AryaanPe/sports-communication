@@ -11,7 +11,7 @@ export const driveMediaUrl = (id, key) =>
   `${API}/files/${id}?alt=media&supportsAllDrives=true&key=${encodeURIComponent(key)}`;
 
 export const NEEDS_KEY =
-  'Google no longer lets other websites play Drive files directly, so Drive links need a free Google API key. Paste one below (steps are in the Readme), or download the video and use Upload.';
+  "This site can't open Google Drive links by itself. Paste a free Google API key below (steps are in the Readme), or download the video and use Upload.";
 
 // turns Google's error reply into something a person can act on. what is 'file' or 'folder'
 export function explainDriveError(status, body, what = 'file') {

@@ -45,13 +45,15 @@ Sports Non-Verbal Communication Video Annotator
 - You don't need a video to use the coding panel. Buttons, panels, hotkeys and bulk add can be set up first. Tagging needs a video, and says so if you try without one
 - Load a video by uploading a file, choosing a folder, or linking one
 - Link a video: click "Link a video" and paste a Google Drive link to a video or to a whole folder, or a direct link to a video file. A folder shows its videos in Folder Contents (subfolders open and have a ".." to go back, and the folder name sets the team names like a folder from your computer does)
-- Google Drive needs a free Google API key. Google no longer lets other websites play Drive files through its plain download links, so the app uses the official Drive API. The key is pasted in the Link box and saved in this browser. To make one:
+- Google Drive links work without a key when the site is run with its Drive relay (npm start and the Vercel deploy both include it, see server/driveRelay.js). The relay fetches the file from Google for the page, so the file or folder just has to be shared with General access set to "Anyone with the link"
+- If a site has no relay, Drive needs a free Google API key instead. Paste it in the Link box and it is saved in this browser. To make one:
   1. Go to console.cloud.google.com and create (or pick) a project
   2. APIs & Services > Library > search "Google Drive API" > Enable
   3. APIs & Services > Credentials > Create credentials > API key. It is a good idea to restrict it: API restrictions > Google Drive API, and Website restrictions > this site (and http://localhost:3000/* for testing)
   4. In Drive, share the video or folder with General access set to "Anyone with the link" (Viewer)
   5. To give everyone the same key, set REACT_APP_GOOGLE_API_KEY when building the site. Otherwise each person pastes their own
-- Videos played through the Drive API can be tagged, and the clock and scoreboard can be read from them. Private files, or files that are not shared with "Anyone with the link", can't be opened
+- Videos opened from Drive can be tagged, and the clock and scoreboard can be read from them. Private files, or files that are not shared with "Anyone with the link", can't be opened
+- Upload accepts MP4, WebM, MOV, MKV, AVI and other common types, but the browser only plays what its codecs support (MP4 with H.264 is safest). A file that won't play gets a message saying how to convert it with HandBrake or VLC
 - Browsers can only play some formats. An MP4 with H.264 is safest. Some .mov files (for example ProRes or HEVC) will download fine but won't play
 - A direct link to a video file works if the other site allows it. If it doesn't allow reading the picture, the clock and score can't be read from that video, and a note says so in the clock and scoreboard panel
 

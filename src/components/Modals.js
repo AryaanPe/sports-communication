@@ -392,7 +392,7 @@ export function ConfirmModal({ title, message, confirmLabel = 'OK', onConfirm, o
 
 // paste a Google Drive link (a video or a folder) or a direct link to a video.
 // onSubmit(text, key) gives back a problem to show, or nothing. It may take a while, so it can return a promise
-export function LinkModal({ onSubmit, onClose, savedKey, keyFromSite }) {
+export function LinkModal({ onSubmit, onClose, savedKey }) {
   const [text, setText] = useState('');
   const [key, setKey] = useState(savedKey || '');
   const [error, setError] = useState('');
@@ -428,9 +428,7 @@ export function LinkModal({ onSubmit, onClose, savedKey, keyFromSite }) {
           />
         </div>
         <div>
-          <label className={labelCls}>
-            Google API key (needed for Drive links{keyFromSite ? ', this site already has one so this is optional' : ''})
-          </label>
+          <label className={labelCls}>Google API key (optional: only needed if this site can't open Drive links by itself)</label>
           <input
             className={inputCls}
             value={key}
@@ -445,7 +443,7 @@ export function LinkModal({ onSubmit, onClose, savedKey, keyFromSite }) {
         </div>
         {error && <p className="text-xs text-red-400">{error}</p>}
         <p className="text-xs text-gray-400">
-          In Google Drive, share the video or folder with General access set to "Anyone with the link". The key is free and is saved in this browser. Steps to get one are in the Readme.
+          In Google Drive, share the video or folder with General access set to "Anyone with the link". A key is free and is saved in this browser. Steps to get one are in the Readme.
         </p>
         <div className="flex gap-2">
           <button onClick={onClose} className="ml-auto bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm">Cancel</button>

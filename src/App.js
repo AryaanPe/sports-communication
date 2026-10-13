@@ -31,6 +31,7 @@ import { detectScoreboard } from './scoreboardLayout';
 import { ReadingGuard } from './readingGuard';
 import { parseVideoLink } from './videoLink';
 import { listDriveFolder, getDriveFileInfo, driveMediaUrl, looksLikeVideo, NEEDS_KEY } from './driveApi';
+import { relayInfo, relayFolder, relayVideoUrl, isFinal } from './driveRelayClient';
 import { recognizeText, cropToCanvas, contentRect, parseClock, regionAt, findClockInCanvas, seekVideo } from './ocr';
 import {
   ActionEditModal,
@@ -130,6 +131,7 @@ export default function VideoAnnotator() {
   const modalOpenRef = useRef(false);
   const lastIdRef = useRef(0);
   const liveBusyRef = useRef(false);
+  const nameRef = useRef(''); // file name of the open video, for format hints
   const linkRef = useRef(null); // addresses still to try for a linked video
   const autoDetectRef = useRef(null);
   const detectKeyRef = useRef('');
@@ -271,7 +273,8 @@ export default function VideoAnnotator() {
     "Reading the clock and score needs the video uploaded from your computer. This link doesn't allow it, so type them in, or download the video and use Upload.";
 
   // opens a video and starts fresh for it
-  const openVideo = ({ src, key, baseName, index = null, cors = false, candidates = null }) => {
+  const openVideo = ({ src, key, baseName, index = null, cors = false, candidates = null, fileName = '' }) => {
+    nameRef.current = fileName;
     stopClips(false);
     linkRef.current = candidates;
     setVideoCors(cors);
@@ -311,28 +314,57 @@ export default function VideoAnnotator() {
     }
   };
 
-  // opens a video from Google Drive through the API. returns a problem to show, or nothing
+  // opens a video from Google Drive. The site's own relay is tried first and needs no key, then the Google API with a key.
+  // returns a problem to show, or nothing
   const openDriveVideo = async (id, nameHint, index, key) => {
+    const open = (src, name, info) =>
+      openVideo({
+        src,
+        key: `drive:${id}`,
+        baseName: (name || nameHint || `drive-${id.slice(0, 8)}`).replace(/\.[^/.]+$/, ''),
+        fileName: name || nameHint || '',
+        index,
+        cors: src.startsWith('http'), // the API address is another site, the relay is this one
+        candidates: { list: [{ url: src, cors: src.startsWith('http') }], index: 0, kind: 'drive' },
+      });
+
+    let relayProblem = null;
+    try {
+      const info = await relayInfo(id);
+      if (info) {
+        if (!looksLikeVideo(info)) return 'That Drive file is not a video.';
+        open(relayVideoUrl(id), info.name, info);
+        return '';
+      }
+    } catch (err) {
+      if (isFinal(err) || !key) return err.message;
+      relayProblem = err;
+    }
+
+    if (!key) return NEEDS_KEY;
     try {
       const info = await getDriveFileInfo(id, key);
       if (!looksLikeVideo(info)) return 'That Drive file is not a video.';
-      openVideo({
-        src: driveMediaUrl(id, key),
-        key: `drive:${id}`,
-        baseName: (info.name || nameHint || `drive-${id.slice(0, 8)}`).replace(/\.[^/.]+$/, ''),
-        index,
-        cors: true,
-        candidates: { list: [{ url: driveMediaUrl(id, key), cors: true }], index: 0, kind: 'drive' },
-      });
+      open(driveMediaUrl(id, key), info.name, info);
       return '';
     } catch (err) {
-      return err.message;
+      return relayProblem ? `${relayProblem.message}` : err.message;
     }
   };
 
   // shows a Drive folder in the Folder Contents list. trail is the folders above it. throws a plain message on trouble
   const openDriveFolder = async (id, trail, key) => {
-    const listing = await listDriveFolder(id, key);
+    let listing = null;
+    try {
+      listing = await relayFolder(id);
+    } catch (err) {
+      if (isFinal(err) || !key) throw err;
+    }
+    if (!listing) {
+      if (!key) throw new Error(NEEDS_KEY);
+      listing = await listDriveFolder(id, key);
+    }
+
     const nextTrail = [...trail, { id: listing.id, name: listing.name }];
     const items = [];
     if (nextTrail.length > 1) items.push({ name: '..', driveType: 'back' });
@@ -369,9 +401,8 @@ export default function VideoAnnotator() {
       return '';
     }
 
-    // Google Drive, which only works through its API
+    // Google Drive: through this site's relay if it has one, otherwise through the Google API with a key
     const key = (keyText || driveKey || '').trim();
-    if (!key) return NEEDS_KEY;
     try {
       if (parsed.kind === 'driveFolder') {
         await openDriveFolder(parsed.id, [], key);
@@ -382,7 +413,7 @@ export default function VideoAnnotator() {
     } catch (err) {
       return err.message;
     }
-    if (key !== driveKey) saveDriveKey(key);
+    if (key && key !== driveKey) saveDriveKey(key);
     setShowLink(false);
     return '';
   };
@@ -418,7 +449,13 @@ export default function VideoAnnotator() {
       setVideoSrc(next.url);
       return;
     }
+    const ext = nameRef.current.split('.').pop().toLowerCase();
     let message = "This video can't be played in the browser. An MP4 (H.264) plays best.";
+    if (['avi', 'wmv', 'flv', 'mpg', 'mpeg', 'ts', 'mts', 'm2ts', '3gp'].includes(ext)) {
+      message = `Browsers can't play .${ext} files. Convert it to MP4 (H.264) with a free tool like HandBrake or VLC and open that.`;
+    } else if (['mov', 'mkv'].includes(ext)) {
+      message = `This .${ext} uses a codec the browser can't play (often HEVC or ProRes). Convert it to MP4 (H.264) with HandBrake or VLC and open that.`;
+    }
     if (tries && tries.kind === 'drive') {
       message = "Google sent the file but the browser can't play it. It may be in a format browsers don't support. An MP4 (H.264) plays best.";
     } else if (tries) {
@@ -534,6 +571,7 @@ export default function VideoAnnotator() {
       src: URL.createObjectURL(file),
       key: file.webkitRelativePath || file.name,
       baseName: file.name.replace(/\.[^/.]+$/, ''),
+      fileName: file.name,
       index,
     });
   };
@@ -1315,7 +1353,7 @@ export default function VideoAnnotator() {
         type="file"
         ref={fileInputRef}
         onChange={handleFileUpload}
-        accept="video/*"
+        accept="video/*,.mov,.m4v,.mkv,.avi,.wmv,.flv,.mpg,.mpeg,.ts,.mts,.m2ts,.3gp,.ogv,.webm"
         style={{ display: 'none' }}
       />
 
@@ -2093,7 +2131,6 @@ export default function VideoAnnotator() {
             onSubmit={linkVideo}
             onClose={() => setShowLink(false)}
             savedKey={driveKey}
-            keyFromSite={!!process.env.REACT_APP_GOOGLE_API_KEY}
           />
         )}
 
