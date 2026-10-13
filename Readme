@@ -44,9 +44,16 @@ Sports Non-Verbal Communication Video Annotator
 - Summary shows counts per action per team and can be exported as CSV
 - You don't need a video to use the coding panel. Buttons, panels, hotkeys and bulk add can be set up first. Tagging needs a video, and says so if you try without one
 - Load a video by uploading a file, choosing a folder, or linking one
-- Link: click "Link a video" and paste a Google Drive link. In Drive, open the video, click Share, set General access to "Anyone with the link", and copy the link. A direct link to a video file also works. Folder links and YouTube links don't
-- Linked videos play and can be tagged, and their annotations are saved. Google Drive may not allow the page to read the picture, and then the clock and score can't be read from the video (you can type them). Very large files may not play from Drive. If a linked video can't be read, a note appears in the clock and scoreboard panel
-- The game clock can be typed in the Game Clock box and is added to each new annotation
+- Link a video: click "Link a video" and paste a Google Drive link to a video or to a whole folder, or a direct link to a video file. A folder shows its videos in Folder Contents (subfolders open and have a ".." to go back, and the folder name sets the team names like a folder from your computer does)
+- Google Drive needs a free Google API key. Google no longer lets other websites play Drive files through its plain download links, so the app uses the official Drive API. The key is pasted in the Link box and saved in this browser. To make one:
+  1. Go to console.cloud.google.com and create (or pick) a project
+  2. APIs & Services > Library > search "Google Drive API" > Enable
+  3. APIs & Services > Credentials > Create credentials > API key. It is a good idea to restrict it: API restrictions > Google Drive API, and Website restrictions > this site (and http://localhost:3000/* for testing)
+  4. In Drive, share the video or folder with General access set to "Anyone with the link" (Viewer)
+  5. To give everyone the same key, set REACT_APP_GOOGLE_API_KEY when building the site. Otherwise each person pastes their own
+- Videos played through the Drive API can be tagged, and the clock and scoreboard can be read from them. Private files, or files that are not shared with "Anyone with the link", can't be opened
+- Browsers can only play some formats. An MP4 with H.264 is safest. Some .mov files (for example ProRes or HEVC) will download fine but won't play
+- A direct link to a video file works if the other site allows it. If it doesn't allow reading the picture, the clock and score can't be read from that video, and a note says so in the clock and scoreboard panel
 
 # Game Clock and Scoreboard
 - The game clock and the score are read from the video, so you don't have to type them

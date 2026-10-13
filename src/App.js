@@ -30,6 +30,7 @@ import { createScoreReader, createCellReader } from './scoreboard';
 import { detectScoreboard } from './scoreboardLayout';
 import { ReadingGuard } from './readingGuard';
 import { parseVideoLink } from './videoLink';
+import { listDriveFolder, getDriveFileInfo, driveMediaUrl, looksLikeVideo, NEEDS_KEY } from './driveApi';
 import { recognizeText, cropToCanvas, contentRect, parseClock, regionAt, findClockInCanvas, seekVideo } from './ocr';
 import {
   ActionEditModal,
@@ -87,6 +88,15 @@ export default function VideoAnnotator() {
   const [showSummary, setShowSummary] = useState(false);
   const [dialog, setDialog] = useState(null); // { kind, teamId }
   const [showLink, setShowLink] = useState(false);
+  const [driveKey, setDriveKey] = useState(() => {
+    try {
+      return localStorage.getItem('tc_google_key') || process.env.REACT_APP_GOOGLE_API_KEY || '';
+    } catch (e) {
+      return process.env.REACT_APP_GOOGLE_API_KEY || '';
+    }
+  });
+  const [folderName, setFolderName] = useState('');
+  const [driveTrail, setDriveTrail] = useState([]); // Drive folders opened so far, the last one is showing
   const [videoCors, setVideoCors] = useState(false); // ask the server to allow reading the picture
   const [readable, setReadable] = useState(true); // false when the picture can't be read (some linked videos)
   const [toast, setToast] = useState(null);
@@ -292,20 +302,109 @@ export default function VideoAnnotator() {
     }
   };
 
+  const saveDriveKey = (key) => {
+    setDriveKey(key);
+    try {
+      localStorage.setItem('tc_google_key', key);
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  // opens a video from Google Drive through the API. returns a problem to show, or nothing
+  const openDriveVideo = async (id, nameHint, index, key) => {
+    try {
+      const info = await getDriveFileInfo(id, key);
+      if (!looksLikeVideo(info)) return 'That Drive file is not a video.';
+      openVideo({
+        src: driveMediaUrl(id, key),
+        key: `drive:${id}`,
+        baseName: (info.name || nameHint || `drive-${id.slice(0, 8)}`).replace(/\.[^/.]+$/, ''),
+        index,
+        cors: true,
+        candidates: { list: [{ url: driveMediaUrl(id, key), cors: true }], index: 0, kind: 'drive' },
+      });
+      return '';
+    } catch (err) {
+      return err.message;
+    }
+  };
+
+  // shows a Drive folder in the Folder Contents list. trail is the folders above it. throws a plain message on trouble
+  const openDriveFolder = async (id, trail, key) => {
+    const listing = await listDriveFolder(id, key);
+    const nextTrail = [...trail, { id: listing.id, name: listing.name }];
+    const items = [];
+    if (nextTrail.length > 1) items.push({ name: '..', driveType: 'back' });
+    listing.folders.forEach((f) => items.push({ name: `${f.name}/`, driveId: f.id, driveType: 'folder' }));
+    sortFiles(listing.videos).forEach((v) => items.push({ name: v.name, driveId: v.id, driveType: 'video' }));
+
+    setFolderFiles(items);
+    setCurrentFileIndex(null);
+    setDriveTrail(nextTrail);
+    setFolderName(nextTrail.map((t) => t.name).join(' / '));
+    if (trail.length === 0) {
+      // the first folder names the teams, like a folder from the computer does
+      const [team1, team2] = extractTeamsFromFolderName(listing.name);
+      setTeams([team1, team2]);
+      setActiveTeamId(team1.id);
+    }
+  };
+
   // returns a problem to show, or nothing when the link was opened
-  const linkVideo = (text) => {
+  const linkVideo = async (text, keyText) => {
     const parsed = parseVideoLink(text);
     if (!parsed.ok) return parsed.error;
-    const first = parsed.candidates[0];
-    openVideo({
-      src: first.url,
-      key: parsed.key,
-      baseName: parsed.name,
-      cors: first.cors,
-      candidates: { list: parsed.candidates, index: 0 },
-    });
+
+    if (parsed.kind === 'url') {
+      const first = parsed.candidates[0];
+      openVideo({
+        src: first.url,
+        key: parsed.key,
+        baseName: parsed.name,
+        cors: first.cors,
+        candidates: { list: parsed.candidates, index: 0, kind: 'url' },
+      });
+      setShowLink(false);
+      return '';
+    }
+
+    // Google Drive, which only works through its API
+    const key = (keyText || driveKey || '').trim();
+    if (!key) return NEEDS_KEY;
+    try {
+      if (parsed.kind === 'driveFolder') {
+        await openDriveFolder(parsed.id, [], key);
+      } else {
+        const problem = await openDriveVideo(parsed.id, parsed.name, null, key);
+        if (problem) return problem;
+      }
+    } catch (err) {
+      return err.message;
+    }
+    if (key !== driveKey) saveDriveKey(key);
     setShowLink(false);
     return '';
+  };
+
+  // a click in the Folder Contents list: a video, a Drive subfolder, the way back, or a file from the computer
+  const handleFolderItem = async (file, idx) => {
+    if (!file.driveType) {
+      loadVideoFromFile(file, idx);
+      return;
+    }
+    try {
+      if (file.driveType === 'video') {
+        const problem = await openDriveVideo(file.driveId, file.name, idx, driveKey);
+        if (problem) setToast({ message: problem });
+      } else if (file.driveType === 'folder') {
+        await openDriveFolder(file.driveId, driveTrail, driveKey);
+      } else if (file.driveType === 'back' && driveTrail.length > 1) {
+        await openDriveFolder(driveTrail[driveTrail.length - 2].id, driveTrail.slice(0, -2), driveKey);
+      }
+    } catch (err) {
+      setToast({ message: err.message });
+    }
   };
 
   // a link that won't play: try the next address, and say so when none work
@@ -319,11 +418,13 @@ export default function VideoAnnotator() {
       setVideoSrc(next.url);
       return;
     }
-    setToast({
-      message: tries
-        ? 'Could not play that link. In Google Drive set sharing to "Anyone with the link" and check that it is a video file. Very large files may not play.'
-        : "This video can't be played in the browser.",
-    });
+    let message = "This video can't be played in the browser. An MP4 (H.264) plays best.";
+    if (tries && tries.kind === 'drive') {
+      message = "Google sent the file but the browser can't play it. It may be in a format browsers don't support. An MP4 (H.264) plays best.";
+    } else if (tries) {
+      message = 'Could not play that link. Check that it goes straight to a video file the browser can play, like an MP4.';
+    }
+    setToast({ message });
   };
 
   // can the picture be read for the clock and score? (some linked videos don't allow it)
@@ -417,9 +518,12 @@ export default function VideoAnnotator() {
     setFolderFiles(sortFiles(files));
     setCurrentFileIndex(null);
 
+    setDriveTrail([]);
+
     if (files.length > 0) {
-      const folderName = files[0].webkitRelativePath.split('/')[0];
-      const [team1, team2] = extractTeamsFromFolderName(folderName);
+      const name = files[0].webkitRelativePath.split('/')[0];
+      setFolderName(name);
+      const [team1, team2] = extractTeamsFromFolderName(name);
       setTeams([team1, team2]);
       setActiveTeamId(team1.id);
     }
@@ -1607,7 +1711,10 @@ export default function VideoAnnotator() {
                 {/* FOLDER CONTENTS */}
                 <div className="bg-gray-800 rounded-lg p-3 flex flex-col min-h-[260px] max-h-[360px] flex-1">
                   <div className="flex items-center justify-between mb-2">
-                    <h2 className="text-lg font-bold">Folder Contents</h2>
+                    <div className="min-w-0">
+                      <h2 className="text-lg font-bold">Folder Contents</h2>
+                      {folderName && <p className="text-xs text-gray-400 truncate" title={folderName}>{folderName}</p>}
+                    </div>
                     <button
                       onClick={() => folderInputRef.current && folderInputRef.current.click()}
                       className="bg-gray-700 hover:bg-gray-600 px-3 py-1 text-sm rounded flex items-center gap-2"
@@ -1617,13 +1724,13 @@ export default function VideoAnnotator() {
                   </div>
 
                   {folderFiles.length === 0 ? (
-                    <p className="text-gray-400 text-sm">No folder selected.</p>
+                    <p className="text-gray-400 text-sm">{folderName ? 'No videos in this folder.' : 'No folder selected.'}</p>
                   ) : (
                     <ul className="text-sm overflow-y-auto space-y-1 flex-1">
                       {folderFiles.map((file, idx) => (
                         <li
                           key={idx}
-                          onClick={() => loadVideoFromFile(file, idx)}
+                          onClick={() => handleFolderItem(file, idx)}
                           className={`${
                             currentFileIndex === idx
                               ? 'text-blue-400 bg-blue-900/30 font-semibold'
@@ -1981,7 +2088,14 @@ export default function VideoAnnotator() {
             </div>
           </div>
       </div>
-        {showLink && <LinkModal onSubmit={linkVideo} onClose={() => setShowLink(false)} />}
+        {showLink && (
+          <LinkModal
+            onSubmit={linkVideo}
+            onClose={() => setShowLink(false)}
+            savedKey={driveKey}
+            keyFromSite={!!process.env.REACT_APP_GOOGLE_API_KEY}
+          />
+        )}
 
         {dialog && dialog.kind === 'newPanel' && (
           <InputModal

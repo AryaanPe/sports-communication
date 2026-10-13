@@ -390,20 +390,31 @@ export function ConfirmModal({ title, message, confirmLabel = 'OK', onConfirm, o
   );
 }
 
-// paste a Google Drive link or a direct link to a video. onSubmit gives back a problem to show, or nothing
-export function LinkModal({ onSubmit, onClose }) {
+// paste a Google Drive link (a video or a folder) or a direct link to a video.
+// onSubmit(text, key) gives back a problem to show, or nothing. It may take a while, so it can return a promise
+export function LinkModal({ onSubmit, onClose, savedKey, keyFromSite }) {
   const [text, setText] = useState('');
+  const [key, setKey] = useState(savedKey || '');
   const [error, setError] = useState('');
-  const submit = () => {
-    const problem = onSubmit(text);
-    if (problem) setError(problem);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (busy || !text.trim()) return;
+    setBusy(true);
+    setError('');
+    try {
+      const problem = await onSubmit(text, key);
+      if (problem) setError(problem);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
     <Modal title="Link a video" onClose={onClose} width="w-[30rem]">
       <div className="space-y-3">
         <div>
-          <label className={labelCls}>Google Drive link, or a direct link to a video file</label>
+          <label className={labelCls}>Google Drive link (a video or a folder), or a direct link to a video file</label>
           <input
             className={inputCls}
             value={text}
@@ -416,15 +427,30 @@ export function LinkModal({ onSubmit, onClose }) {
             onKeyDown={(e) => e.key === 'Enter' && submit()}
           />
         </div>
+        <div>
+          <label className={labelCls}>
+            Google API key (needed for Drive links{keyFromSite ? ', this site already has one so this is optional' : ''})
+          </label>
+          <input
+            className={inputCls}
+            value={key}
+            autoComplete="off"
+            placeholder="AIza..."
+            onChange={(e) => {
+              setKey(e.target.value);
+              setError('');
+            }}
+            onKeyDown={(e) => e.key === 'Enter' && submit()}
+          />
+        </div>
         {error && <p className="text-xs text-red-400">{error}</p>}
         <p className="text-xs text-gray-400">
-          In Google Drive open the video, click Share, set General access to "Anyone with the link", and copy the link.
-          Very large files may not play, and a linked video may not allow reading the clock and score.
+          In Google Drive, share the video or folder with General access set to "Anyone with the link". The key is free and is saved in this browser. Steps to get one are in the Readme.
         </p>
         <div className="flex gap-2">
           <button onClick={onClose} className="ml-auto bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm">Cancel</button>
-          <button onClick={submit} disabled={!text.trim()} className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 px-4 py-2 rounded text-sm font-bold">
-            Open
+          <button onClick={submit} disabled={!text.trim() || busy} className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 px-4 py-2 rounded text-sm font-bold">
+            {busy ? 'Looking...' : 'Open'}
           </button>
         </div>
       </div>

@@ -1,6 +1,8 @@
-// Turns a pasted link into addresses a video element can try.
-// Each candidate is { url, cors }. cors true asks the server to allow reading the picture
-// (needed for the clock and score reading), and false only plays it.
+// Turns a pasted link into something the app can open.
+//   kind 'drive'       a Google Drive file { id, key, name }
+//   kind 'driveFolder' a Google Drive folder { id }
+//   kind 'url'         any other address, with addresses to try [{ url, cors }]
+// cors true asks the server to allow reading the picture (needed for the clock and score reading).
 
 const DRIVE_HOSTS = ['drive.google.com', 'docs.google.com', 'drive.usercontent.google.com'];
 
@@ -29,30 +31,18 @@ export function parseVideoLink(text) {
   }
 
   if (DRIVE_HOSTS.includes(host)) {
-    if (/\/folders\/|\/folderview|\/drive\/(u\/\d+\/)?(my-drive|shared-with-me|recent|starred)/.test(url.pathname)) {
-      return { ok: false, error: 'That is a folder link. Open the video in Drive, click Share, and paste that link instead.' };
+    const folder = url.pathname.match(/\/folders\/([\w-]{10,})/) || (/\/folderview/.test(url.pathname) ? [null, url.searchParams.get('id')] : null);
+    if (folder && folder[1] && /^[\w-]{10,}$/.test(folder[1])) {
+      return { ok: true, kind: 'driveFolder', id: folder[1] };
+    }
+    if (/\/drive\/(u\/\d+\/)?(my-drive|shared-with-me|recent|starred)/.test(url.pathname)) {
+      return { ok: false, error: 'That is the Drive home page. Open the folder or the video, click Share, and paste that link.' };
     }
     const fromPath = url.pathname.match(/\/file\/(?:u\/\d+\/)?d\/([\w-]{10,})/);
     const fromQuery = url.searchParams.get('id');
     const id = fromPath ? fromPath[1] : fromQuery && /^[\w-]{10,}$/.test(fromQuery) ? fromQuery : '';
     if (!id) return { ok: false, error: "Couldn't find a file in that Google Drive link." };
-
-    const resourceKey = url.searchParams.get('resourcekey');
-    const rk = resourceKey ? `&resourcekey=${encodeURIComponent(resourceKey)}` : '';
-    const direct = `https://drive.usercontent.google.com/download?id=${id}&export=download&confirm=t${rk}`;
-    const older = `https://drive.google.com/uc?export=download&id=${id}&confirm=t${rk}`;
-    return {
-      ok: true,
-      kind: 'drive',
-      key: `drive:${id}`,
-      name: `drive-${id.slice(0, 8)}`,
-      candidates: [
-        { url: direct, cors: true },
-        { url: direct, cors: false },
-        { url: older, cors: true },
-        { url: older, cors: false },
-      ],
-    };
+    return { ok: true, kind: 'drive', id, key: `drive:${id}`, name: `drive-${id.slice(0, 8)}` };
   }
 
   // any other address is used as it is
