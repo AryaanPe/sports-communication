@@ -1565,7 +1565,29 @@ export default function VideoAnnotator() {
                           Choose a folder
                         </button>
                       </div>
-                      <p className="text-xs text-gray-500">No video? You can still code live with the clock on the right, or set up your buttons and panels.</p>
+                      <div className="mt-2 flex flex-col items-center gap-2">
+                        <div className="text-xs uppercase tracking-wide text-gray-500">Live clock (no video needed)</div>
+                        <input
+                          type="text"
+                          value={gameClockTime}
+                          onChange={(e) => setGameClockTime(e.target.value)}
+                          placeholder="10:00 Q1"
+                          aria-label="Live clock"
+                          className="w-64 text-center text-5xl font-mono bg-transparent text-white border-b border-gray-600 focus:border-blue-500 outline-none"
+                        />
+                        <div className="flex gap-2 text-sm">
+                          <button
+                            onClick={toggleLive}
+                            className={`px-3 py-1 rounded text-white ${liveRunning ? 'bg-red-600 hover:bg-red-500' : 'bg-green-600 hover:bg-green-500'}`}
+                          >
+                            {liveRunning ? 'Stop clock' : 'Start clock'}
+                          </button>
+                          <button onClick={() => setLiveDown((d) => !d)} className="px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 text-white">
+                            {liveDown ? 'Counting down' : 'Counting up'}
+                          </button>
+                        </div>
+                        <p className="text-xs text-gray-500">Type a time, press Start, then tag. Tags get this clock time.</p>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1851,20 +1873,6 @@ export default function VideoAnnotator() {
                     className="w-14 bg-gray-800 text-white text-sm px-2 py-1 rounded border border-gray-600 focus:border-blue-500"
                   />
                 </div>
-                {!videoSrc && (
-                  <div className="flex items-center gap-2 mb-2 text-xs text-gray-300">
-                    <button
-                      onClick={toggleLive}
-                      className={`px-2 py-1 rounded text-white ${liveRunning ? 'bg-red-600 hover:bg-red-500' : 'bg-green-600 hover:bg-green-500'}`}
-                    >
-                      {liveRunning ? 'Stop clock' : 'Start clock'}
-                    </button>
-                    <button onClick={() => setLiveDown((d) => !d)} className="px-2 py-1 rounded bg-gray-600 hover:bg-gray-500 text-white">
-                      {liveDown ? 'Counting down' : 'Counting up'}
-                    </button>
-                    <span>No video: tags use this clock</span>
-                  </div>
-                )}
                 <input
                   type="text"
                   value={scoreText}
