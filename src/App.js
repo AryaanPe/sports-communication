@@ -24,6 +24,7 @@ import {
   loadScoreArea,
   saveScoreArea,
 } from './panelUtils';
+
 import Timeline from './components/Timeline';
 import RegionSelector from './components/RegionSelector';
 import { createScoreReader, createCellReader } from './scoreboard';
@@ -45,9 +46,11 @@ import {
   summaryToCSV,
 } from './components/Modals';
 
+const LIVE_KEY = 'live-session'; // annotations made without a video
+
 export default function VideoAnnotator() {
   const [videoSrc, setVideoSrc] = useState(null);
-  const [annotations, setAnnotations] = useState([]);
+  const [annotations, setAnnotations] = useState(() => loadAnnotations(LIVE_KEY));
   const [activeShot, setActiveShot] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -128,6 +131,9 @@ export default function VideoAnnotator() {
   const panelImportRef = useRef(null);
   const clipRef = useRef(null);
   const hotkeyRef = useRef(null);
+  const [liveRunning, setLiveRunning] = useState(false); // the practice clock used when there is no video
+  const [liveDown, setLiveDown] = useState(true);
+  const liveRef = useRef({ base: 0, since: null }); // seconds counted before the last start, and when it started
   const modalOpenRef = useRef(false);
   const lastIdRef = useRef(0);
   const liveBusyRef = useRef(false);
@@ -195,8 +201,47 @@ export default function VideoAnnotator() {
   }, [liveRead, isPlaying]);
 
   useEffect(() => {
-    if (videoKey) saveAnnotations(videoKey, annotations);
+    saveAnnotations(videoKey || LIVE_KEY, annotations);
   }, [videoKey, annotations]);
+
+  // seconds the live clock has been running, used as the timestamp when there is no video
+  const liveTime = () => liveRef.current.base + (liveRef.current.since ? (Date.now() - liveRef.current.since) / 1000 : 0);
+
+  const toggleLive = () => {
+    if (liveRunning) {
+      liveRef.current = { base: liveTime(), since: null };
+      setLiveRunning(false);
+      return;
+    }
+    if (!/^\s*\d{1,2}:\d{2}/.test(gameClockTime)) setGameClockTime('10:00');
+    liveRef.current = { base: liveRef.current.base, since: Date.now() };
+    setLiveRunning(true);
+  };
+
+  useEffect(() => {
+    if (videoSrc && liveRunning) {
+      liveRef.current = { base: liveTime(), since: null };
+      setLiveRunning(false);
+    }
+  }, [videoSrc]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!liveRunning || videoSrc) return undefined;
+    const timer = setInterval(() => {
+      setGameClockTime((prev) => {
+        const m = /^(\s*)(\d{1,2}):(\d{2})(.*)$/.exec(prev);
+        if (!m) return prev;
+        const secs = Math.max(0, Number(m[2]) * 60 + Number(m[3]) + (liveDown ? -1 : 1));
+        return `${m[1]}${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}${m[4]}`;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [liveRunning, liveDown, videoSrc]);
+
+  // a clock counting down stops at zero
+  useEffect(() => {
+    if (liveRunning && liveDown && /^\s*0:00/.test(gameClockTime)) toggleLive();
+  }, [gameClockTime]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -248,9 +293,12 @@ export default function VideoAnnotator() {
 
   useEffect(() => {
     const handleKeyPress = (e) => {
-      if (!videoRef.current || !videoRef.current.getAttribute('src') || e.target.matches('input, textarea, select') || modalOpenRef.current) return;
+      if (!videoRef.current || e.target.matches('input, textarea, select') || modalOpenRef.current) return;
+      const hasVideo = !!videoRef.current.getAttribute('src');
 
-      if (e.code === 'Space') {
+      if (!hasVideo) {
+        if (!e.ctrlKey && !e.metaKey && !e.altKey && hotkeyRef.current) hotkeyRef.current(e);
+      } else if (e.code === 'Space') {
         e.preventDefault();
         videoRef.current.paused ? videoRef.current.play() : videoRef.current.pause();
         setIsPlaying(!videoRef.current.paused);
@@ -689,11 +737,8 @@ export default function VideoAnnotator() {
   };
 
   const handleActionClick = (action) => {
-    if (!videoRef.current || !videoSrc) {
-      setToast({ message: 'Load a video to tag moments. You can still set up your buttons.' });
-      return;
-    }
-    const timestamp = videoRef.current.currentTime;
+    if (!videoRef.current) return;
+    const timestamp = videoSrc ? videoRef.current.currentTime : liveTime();
 
     if (action.kind === 'shot') {
       // Pause video while they fill out the form
@@ -770,7 +815,7 @@ export default function VideoAnnotator() {
     if (!videoRef.current || !customAnnotation.trim()) return;
     const newAnnotation = buildAnnotation(
       { id: 'Other', label: customAnnotation.trim(), color: 'bg-gray-500' },
-      { timestamp: videoRef.current.currentTime }
+      { timestamp: videoSrc ? videoRef.current.currentTime : liveTime() }
     );
     setAnnotations([newAnnotation, ...annotations]);
     setCustomAnnotation('');
@@ -963,7 +1008,7 @@ export default function VideoAnnotator() {
   };
 
   const seekToAnnotation = (timestamp) => {
-    if (!videoRef.current) return;
+    if (!videoRef.current || !videoSrc) return;
     videoRef.current.currentTime = timestamp;
     setCurrentTime(timestamp);
   };
@@ -1264,7 +1309,7 @@ export default function VideoAnnotator() {
 
   // auto mode reads the clock and scores for each new tag, and searches the whole frame if the clock region misses
   const autoReadClock = (annotationId) => {
-    if (!autoClock || !videoRef.current || !readable) return;
+    if (!autoClock || !videoRef.current || !videoSrc || !readable) return;
     const video = videoRef.current;
     const crop = captureClock();
     const frame = captureFrame();
@@ -1520,7 +1565,7 @@ export default function VideoAnnotator() {
                           Choose a folder
                         </button>
                       </div>
-                      <p className="text-xs text-gray-500">You can set up your buttons and panels without a video.</p>
+                      <p className="text-xs text-gray-500">No video? You can still code live with the clock on the right, or set up your buttons and panels.</p>
                     </div>
                   )}
                 </div>
@@ -1806,6 +1851,20 @@ export default function VideoAnnotator() {
                     className="w-14 bg-gray-800 text-white text-sm px-2 py-1 rounded border border-gray-600 focus:border-blue-500"
                   />
                 </div>
+                {!videoSrc && (
+                  <div className="flex items-center gap-2 mb-2 text-xs text-gray-300">
+                    <button
+                      onClick={toggleLive}
+                      className={`px-2 py-1 rounded text-white ${liveRunning ? 'bg-red-600 hover:bg-red-500' : 'bg-green-600 hover:bg-green-500'}`}
+                    >
+                      {liveRunning ? 'Stop clock' : 'Start clock'}
+                    </button>
+                    <button onClick={() => setLiveDown((d) => !d)} className="px-2 py-1 rounded bg-gray-600 hover:bg-gray-500 text-white">
+                      {liveDown ? 'Counting down' : 'Counting up'}
+                    </button>
+                    <span>No video: tags use this clock</span>
+                  </div>
+                )}
                 <input
                   type="text"
                   value={scoreText}
