@@ -1007,6 +1007,8 @@ export default function VideoAnnotator() {
     setEditingAnnotation(null);
   };
 
+  const hasGameClock = (ann) => !!ann.gameClockTime && ann.gameClockTime !== 'N/A';
+
   const seekToAnnotation = (timestamp) => {
     if (!videoRef.current || !videoSrc) return;
     videoRef.current.currentTime = timestamp;
@@ -1774,10 +1776,10 @@ export default function VideoAnnotator() {
                             className="flex items-center gap-2 flex-1 text-left"
                           >
                             <span {...colorProps(ann.color, 'px-2 py-1 rounded-full text-xs font-semibold')}>
-                              {ann.formattedTime}
+                              {!videoSrc && hasGameClock(ann) ? ann.gameClockTime : ann.formattedTime}
                             </span>
 
-                            {ann.gameClockTime && ann.gameClockTime !== 'N/A' && (
+                            {videoSrc && hasGameClock(ann) && (
                               <span className="bg-orange-600 px-2 py-1 rounded-full text-xs font-semibold">
                                 {ann.gameClockTime}
                               </span>
